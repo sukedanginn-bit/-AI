@@ -42,6 +42,191 @@ export default {
       );
     }
 
+    if (url.pathname === "/api/knowledge/pdfs") {
+      if (request.method !== "GET") {
+        return json(
+          { error: "Method Not Allowed" },
+          405
+        );
+      }
+
+      if (!env.KNOWLEDGE_PDFS) {
+        return json(
+          { error: "KNOWLEDGE_PDFS R2バインディングが設定されていません" },
+          500
+        );
+      }
+
+      const listed =
+        await env.KNOWLEDGE_PDFS.list({
+          prefix: "experience/",
+          limit: 100,
+        });
+
+      return json({
+        files:
+          listed.objects.map(
+            pdfMetadata
+          ),
+      });
+    }
+
+    if (url.pathname === "/api/admin/pdfs") {
+      const authError =
+        validatePdfAdmin(
+          request,
+          env
+        );
+
+      if (authError) {
+        return authError;
+      }
+
+      if (request.method !== "POST") {
+        return json(
+          { error: "Method Not Allowed" },
+          405
+        );
+      }
+
+      if (!env.KNOWLEDGE_PDFS) {
+        return json(
+          { error: "KNOWLEDGE_PDFS R2バインディングが設定されていません" },
+          500
+        );
+      }
+
+      const form =
+        await request.formData();
+
+      const file =
+        form.get("file");
+
+      if (!(file instanceof File)) {
+        return json(
+          { error: "PDFファイルがありません" },
+          400
+        );
+      }
+
+      if (
+        file.type !== "application/pdf" ||
+        !file.name.toLowerCase().endsWith(".pdf")
+      ) {
+        return json(
+          { error: "PDF形式のみ登録できます" },
+          400
+        );
+      }
+
+      if (file.size > 10 * 1024 * 1024) {
+        return json(
+          { error: "PDFは10MB以下にしてください" },
+          413
+        );
+      }
+
+      const safeName =
+        sanitizePdfName(
+          file.name
+        );
+
+      const key =
+        "experience/" +
+        crypto.randomUUID() +
+        "-" +
+        safeName;
+
+      await env.KNOWLEDGE_PDFS.put(
+        key,
+        file,
+        {
+          httpMetadata: {
+            contentType:
+              "application/pdf",
+          },
+          customMetadata: {
+            originalName:
+              file.name.slice(0, 180),
+            title:
+              String(
+                form.get("title") ||
+                file.name
+              ).slice(0, 180),
+            author:
+              String(
+                form.get("author") ||
+                ""
+              ).slice(0, 180),
+            sourceType:
+              "owned_experience_pdf",
+          },
+        }
+      );
+
+      const saved =
+        await env.KNOWLEDGE_PDFS.head(
+          key
+        );
+
+      return json(
+        {
+          file:
+            pdfMetadata(saved),
+        },
+        201
+      );
+    }
+
+    const pdfDeleteMatch =
+      url.pathname.match(
+        /^\/api\/admin\/pdfs\/(.+)$/
+      );
+
+    if (pdfDeleteMatch) {
+      const authError =
+        validatePdfAdmin(
+          request,
+          env
+        );
+
+      if (authError) {
+        return authError;
+      }
+
+      if (request.method !== "DELETE") {
+        return json(
+          { error: "Method Not Allowed" },
+          405
+        );
+      }
+
+      if (!env.KNOWLEDGE_PDFS) {
+        return json(
+          { error: "KNOWLEDGE_PDFS R2バインディングが設定されていません" },
+          500
+        );
+      }
+
+      const key =
+        decodeURIComponent(
+          pdfDeleteMatch[1]
+        );
+
+      if (!key.startsWith("experience/")) {
+        return json(
+          { error: "無効なPDFキーです" },
+          400
+        );
+      }
+
+      await env.KNOWLEDGE_PDFS.delete(
+        key
+      );
+
+      return json({ success: true });
+    }
+
     if (
       request.method === "POST" &&
       url.pathname === "/api/ai/analyze"
@@ -326,6 +511,82 @@ export default {
     );
   },
 };
+
+
+function validatePdfAdmin(
+  request,
+  env
+) {
+  if (!env.PDF_ADMIN_PASSWORD) {
+    return json(
+      { error: "PDF_ADMIN_PASSWORD が設定されていません" },
+      500
+    );
+  }
+
+  const supplied =
+    request.headers.get(
+      "x-admin-password"
+    ) || "";
+
+  if (supplied !== env.PDF_ADMIN_PASSWORD) {
+    return json(
+      { error: "管理者認証に失敗しました" },
+      401
+    );
+  }
+
+  return null;
+}
+
+
+function sanitizePdfName(
+  name
+) {
+  const cleaned =
+    String(name)
+      .normalize("NFKC")
+      .replace(
+        /[^a-zA-Z0-9._-]+/g,
+        "-"
+      )
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 120);
+
+  return cleaned || "document.pdf";
+}
+
+
+function pdfMetadata(
+  object
+) {
+  const metadata =
+    object?.customMetadata || {};
+
+  return {
+    key:
+      object?.key || "",
+    name:
+      metadata.originalName ||
+      object?.key?.split("/").pop() ||
+      "",
+    title:
+      metadata.title ||
+      metadata.originalName ||
+      "",
+    author:
+      metadata.author || "",
+    sourceType:
+      metadata.sourceType ||
+      "owned_experience_pdf",
+    size:
+      object?.size || 0,
+    uploaded:
+      object?.uploaded
+        ? object.uploaded.toISOString()
+        : "",
+  };
+}
 
 
 async function runOpenAI(
