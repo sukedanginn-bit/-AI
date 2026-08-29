@@ -2166,6 +2166,55 @@ class="hidden"
 </section>
 
 
+<section class="card">
+
+<h2>
+📄 経験則PDFライブラリ
+</h2>
+
+<p class="section-note muted">
+所有しているPDFを固定資料としてR2へ登録・更新できます。管理パスワードは保存されません。
+</p>
+
+<details>
+<summary style="cursor:pointer; font-weight:700">
+PDFを管理する
+</summary>
+
+<div class="grid2" style="margin-top:14px">
+<div>
+<label for="pdfAdminPassword">管理パスワード</label>
+<input id="pdfAdminPassword" type="password" autocomplete="current-password">
+</div>
+<div>
+<label for="pdfFile">PDFファイル（10MB以下）</label>
+<input id="pdfFile" type="file" accept="application/pdf,.pdf">
+</div>
+<div>
+<label for="pdfTitle">資料タイトル</label>
+<input id="pdfTitle" type="text" maxlength="180">
+</div>
+<div>
+<label for="pdfAuthor">著者・講師</label>
+<input id="pdfAuthor" type="text" maxlength="180">
+</div>
+</div>
+
+<button id="pdfUploadButton" class="btn blue" type="button" style="margin-top:14px">
+PDFを登録
+</button>
+
+<div id="pdfAdminMessage" class="status hidden" style="margin-top:12px"></div>
+
+</details>
+
+<div id="pdfLibraryList" class="status loading" style="margin-top:14px">
+PDFライブラリを読み込み中…
+</div>
+
+</section>
+
+
 <section
 id="sameBeanSection"
 class="card analysis-card"
@@ -5040,6 +5089,315 @@ function renderBeanStats() {
 }
 
 
+let knowledgePdfs = [];
+
+
+function formatFileSize(
+  bytes
+) {
+  const size =
+    Number(bytes) || 0;
+
+  if (size < 1024) {
+    return size + " B";
+  }
+
+  if (size < 1024 * 1024) {
+    return round(
+      size / 1024,
+      1
+    ) + " KB";
+  }
+
+  return round(
+    size /
+      (1024 * 1024),
+    1
+  ) + " MB";
+}
+
+
+function renderPdfLibrary() {
+  const list =
+    document.getElementById(
+      "pdfLibraryList"
+    );
+
+  if (!list) return;
+
+  if (!knowledgePdfs.length) {
+    setStatus(
+      list,
+      "登録済みPDFはありません。",
+      "warn"
+    );
+
+    return;
+  }
+
+  list.className = "";
+  list.innerHTML =
+    knowledgePdfs.map(
+      (file) =>
+        '<div class="roast" style="margin-bottom:10px">' +
+        '<div class="roast-head">' +
+        "<div>" +
+        "<strong>" +
+        escapeHTML(
+          file.title || file.name
+        ) +
+        "</strong>" +
+        '<div class="muted small">' +
+        escapeHTML(
+          [
+            file.author,
+            file.name,
+            formatFileSize(file.size),
+          ].filter(Boolean).join(" / ")
+        ) +
+        "</div>" +
+        "</div>" +
+        '<button class="btn light pdf-delete-button" type="button" data-key="' +
+        escapeHTML(file.key) +
+        '">削除</button>' +
+        "</div>" +
+        "</div>"
+    ).join("");
+
+  list.querySelectorAll(
+    ".pdf-delete-button"
+  ).forEach(
+    (button) =>
+      button.addEventListener(
+        "click",
+        () => deleteKnowledgePdf(
+          button.dataset.key
+        )
+      )
+  );
+}
+
+
+async function loadPdfLibrary() {
+  const list =
+    document.getElementById(
+      "pdfLibraryList"
+    );
+
+  try {
+    const response =
+      await fetch(
+        "/api/knowledge/pdfs"
+      );
+
+    const data =
+      await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data.error ||
+        "PDF一覧を取得できませんでした。"
+      );
+    }
+
+    knowledgePdfs =
+      Array.isArray(data.files)
+        ? data.files
+        : [];
+
+    renderPdfLibrary();
+
+  } catch (error) {
+    if (list) {
+      setStatus(
+        list,
+        "PDFライブラリ: " +
+          (
+            error?.message ||
+            String(error)
+          ),
+        "warn"
+      );
+    }
+  }
+}
+
+
+async function uploadKnowledgePdf() {
+  const password =
+    document.getElementById(
+      "pdfAdminPassword"
+    ).value;
+
+  const fileInput =
+    document.getElementById(
+      "pdfFile"
+    );
+
+  const message =
+    document.getElementById(
+      "pdfAdminMessage"
+    );
+
+  const file =
+    fileInput.files?.[0];
+
+  if (!password || !file) {
+    setStatus(
+      message,
+      "管理パスワードとPDFを指定してください。",
+      "warn"
+    );
+
+    return;
+  }
+
+  const form =
+    new FormData();
+
+  form.append("file", file);
+  form.append(
+    "title",
+    document.getElementById(
+      "pdfTitle"
+    ).value
+  );
+  form.append(
+    "author",
+    document.getElementById(
+      "pdfAuthor"
+    ).value
+  );
+
+  setStatus(
+    message,
+    "PDFを登録中…",
+    "loading"
+  );
+
+  try {
+    const response =
+      await fetch(
+        "/api/admin/pdfs",
+        {
+          method: "POST",
+          headers: {
+            "x-admin-password":
+              password,
+          },
+          body: form,
+        }
+      );
+
+    const data =
+      await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data.error ||
+        "PDFを登録できませんでした。"
+      );
+    }
+
+    fileInput.value = "";
+    document.getElementById(
+      "pdfTitle"
+    ).value = "";
+    document.getElementById(
+      "pdfAuthor"
+    ).value = "";
+
+    setStatus(
+      message,
+      "PDFを登録しました。",
+      "ok"
+    );
+
+    await loadPdfLibrary();
+
+  } catch (error) {
+    setStatus(
+      message,
+      error?.message ||
+        String(error),
+      "error"
+    );
+  }
+}
+
+
+async function deleteKnowledgePdf(
+  key
+) {
+  const password =
+    document.getElementById(
+      "pdfAdminPassword"
+    ).value;
+
+  const message =
+    document.getElementById(
+      "pdfAdminMessage"
+    );
+
+  if (!password) {
+    setStatus(
+      message,
+      "管理パスワードを入力してください。",
+      "warn"
+    );
+
+    return;
+  }
+
+  if (!confirm(
+    "このPDFを削除しますか？"
+  )) {
+    return;
+  }
+
+  try {
+    const response =
+      await fetch(
+        "/api/admin/pdfs/" +
+          encodeURIComponent(key),
+        {
+          method: "DELETE",
+          headers: {
+            "x-admin-password":
+              password,
+          },
+        }
+      );
+
+    const data =
+      await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        data.error ||
+        "PDFを削除できませんでした。"
+      );
+    }
+
+    setStatus(
+      message,
+      "PDFを削除しました。",
+      "ok"
+    );
+
+    await loadPdfLibrary();
+
+  } catch (error) {
+    setStatus(
+      message,
+      error?.message ||
+        String(error),
+      "error"
+    );
+  }
+}
+
+
 function getSelectedKnowledgeLayers() {
   return Array.from(
     document.querySelectorAll(
@@ -5838,6 +6196,16 @@ function goNextPage() {
 
 
 document
+  .getElementById(
+    "pdfUploadButton"
+  )
+  .addEventListener(
+    "click",
+    uploadKnowledgePdf
+  );
+
+
+document
   .querySelectorAll(
     'input[name="knowledgeLayer"]'
   )
@@ -5952,6 +6320,7 @@ window.addEventListener(
 
 
 fetchAllData();
+loadPdfLibrary();
 
 </script>
 
