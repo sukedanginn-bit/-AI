@@ -158,10 +158,17 @@ export default {
       const mode =
         body.mode === "cross"
           ? "cross"
-          : "bean";
+          : body.mode === "multi"
+            ? "multi"
+            : "bean";
 
       const selectedBeanKey =
         String(body.selectedBeanKey || "");
+
+      const selectedBeanKeys =
+        Array.isArray(body.selectedBeanKeys)
+          ? body.selectedBeanKeys.map(String)
+          : [];
 
       let entries =
         Array.isArray(body.entries)
@@ -180,6 +187,18 @@ export default {
                 entry.beanKey || ""
               ) ===
               selectedBeanKey
+          );
+      }
+
+      if (mode === "multi") {
+        entries =
+          entries.filter(
+            (entry) =>
+              selectedBeanKeys.includes(
+                String(
+                  entry.beanKey || ""
+                )
+              )
           );
       }
 
@@ -276,7 +295,9 @@ export default {
       const prompt =
         mode === "cross"
           ? crossBeanPrompt(experiments)
-          : sameBeanPrompt(experiments);
+          : mode === "multi"
+            ? multiBeanPlanningPrompt(experiments)
+            : sameBeanPrompt(experiments);
 
       const knowledgeLayers =
         normalizeKnowledgeLayers(
@@ -920,6 +941,43 @@ brew / cupping recipe
 最後に
 「次のバッチではこれ以外を変更しない」
 と明記してください。
+`;
+}
+
+
+function multiBeanPlanningPrompt(
+  experiments
+) {
+  return `
+あなたは競技レベルのスペシャルティコーヒー焙煎コーチ兼実験設計者です。
+
+以下にはユーザーが選択した複数種類の豆の焙煎履歴が含まれます。
+
+${JSON.stringify(experiments)}
+
+目的:
+豆ごとに履歴を完全に分離して評価し、各豆について次回の1変数実験を1つずつ提案してください。
+
+必須ルール:
+- 異なる豆の具体的なPreheat、FC時間、温度、火力・風量操作を別の豆へ直接一般化しない。
+- 各豆では、その豆自身の焙煎実験とカッピング結果を主証拠にする。
+- 豆をまたぐ情報は仮説の着想に限り、具体的条件の根拠にはしない。
+- 各豆の次回実験で変更する変数は1つだけにする。
+- 変更対象以外の条件を明記して固定する。
+- カッピング未入力の焙煎を味覚判断の根拠にしない。
+
+出力:
+豆ごとに以下を繰り返す。
+【豆】
+【この豆自身の履歴から分かったこと】
+【現時点のベスト焙煎】
+【最大の品質課題】
+【次回の単一変数実験】
+【具体的な変更量】
+【固定する条件】
+【結果による次の判断】
+
+最後に、豆間で直接一般化しなかったことを明記してください。
 `;
 }
 
@@ -1866,10 +1924,14 @@ class="card analysis-card"
 <div>
 
 <label for="beanSelect">
-分析する豆
+分析する豆（複数選択可）
 </label>
 
-<select id="beanSelect">
+<select
+id="beanSelect"
+multiple
+size="6"
+>
 
 <option value="">
 豆データを読み込み中…
@@ -1907,7 +1969,7 @@ id="beanAnalyzeButton"
 class="btn green"
 type="button"
 >
-この豆の履歴から次回焙煎を分析
+選択した豆の履歴から次回焙煎を分析
 </button>
 
 </div>
@@ -4570,7 +4632,11 @@ function populateBeanSelects() {
       );
 
   const previousAnalyze =
-    el.beanSelect.value;
+    Array.from(
+      el.beanSelect.selectedOptions
+    ).map(
+      (option) => option.value
+    );
 
   const previousFilter =
     el.filterBean.value;
@@ -4594,17 +4660,23 @@ function populateBeanSelects() {
     '<option value="">すべて</option>' +
     optionHTML;
 
-  if (
-    previousAnalyze &&
-    options.some(
-      (x) =>
-        x.key ===
-        previousAnalyze
-    )
-  ) {
-    el.beanSelect.value =
-      previousAnalyze;
-  }
+  const analyzeSelection =
+    previousAnalyze.length
+      ? previousAnalyze
+      : options.slice(0, 1).map(
+          (item) => item.key
+        );
+
+  Array.from(
+    el.beanSelect.options
+  ).forEach(
+    (option) => {
+      option.selected =
+        analyzeSelection.includes(
+          option.value
+        );
+    }
+  );
 
   if (
     previousFilter &&
@@ -4639,10 +4711,14 @@ function populateBeanSelects() {
 
 
 function renderBeanStats() {
-  const beanKey =
-    el.beanSelect.value;
+  const beanKeys =
+    Array.from(
+      el.beanSelect.selectedOptions
+    ).map(
+      (option) => option.value
+    ).filter(Boolean);
 
-  if (!beanKey) {
+  if (!beanKeys.length) {
     setStatus(
       el.beanStats,
       "豆を選択してください。",
@@ -4655,10 +4731,11 @@ function renderBeanStats() {
   const selected =
     roasts.filter(
       (roast) =>
-        inferBeanKey(
-          roast
-        ) ===
-        beanKey
+        beanKeys.includes(
+          inferBeanKey(
+            roast
+          )
+        )
     );
 
   const withTaste =
@@ -4684,6 +4761,8 @@ function renderBeanStats() {
   setStatus(
     el.beanStats,
     [
+      beanKeys.length +
+      "種類 / " +
       selected.length +
       "焙煎",
 
@@ -5123,10 +5202,14 @@ async function analyzeSingleRoast(
 
 
 async function analyzeSelectedBean() {
-  const beanKey =
-    el.beanSelect.value;
+  const beanKeys =
+    Array.from(
+      el.beanSelect.selectedOptions
+    ).map(
+      (option) => option.value
+    ).filter(Boolean);
 
-  if (!beanKey) {
+  if (!beanKeys.length) {
     setAnalysisOutput(
       el.beanAnalysis,
       "分析する豆を選択してください。",
@@ -5142,14 +5225,15 @@ async function analyzeSelectedBean() {
   const targetEntries =
     entries.filter(
       (entry) =>
-        entry.beanKey ===
-        beanKey
+        beanKeys.includes(
+          entry.beanKey
+        )
     );
 
   if (!targetEntries.length) {
     setAnalysisOutput(
       el.beanAnalysis,
-      "この豆の焙煎履歴がありません。",
+      "選択した豆の焙煎履歴がありません。",
       true
     );
 
@@ -5161,7 +5245,9 @@ async function analyzeSelectedBean() {
 
   setAnalysisOutput(
     el.beanAnalysis,
-    "この豆の焙煎履歴、個別カッピング、共通実験メモをAIが分析しています…"
+    beanKeys.length === 1
+      ? "この豆の焙煎履歴をAIが分析しています…"
+      : "選択した豆を分離したまま、豆ごとの次回焙煎をAIが分析しています…"
   );
 
   try {
@@ -5180,13 +5266,18 @@ async function analyzeSelectedBean() {
           body:
             JSON.stringify({
               mode:
-                "bean",
+                beanKeys.length === 1
+                  ? "bean"
+                  : "multi",
 
               selectedBeanKey:
-                beanKey,
+                beanKeys[0],
+
+              selectedBeanKeys:
+                beanKeys,
 
               entries:
-                entries,
+                targetEntries,
 
               knowledgeLayers:
                 getSelectedKnowledgeLayers(),
