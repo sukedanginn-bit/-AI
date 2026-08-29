@@ -1772,15 +1772,30 @@ class="analysis-output hidden"
 
 <p class="section-note muted">
 豆固有のレシピを決める分析ではありません。
-複数の豆で再現する「自分 + Bullet」の操作傾向だけを探します。
+選択した複数の豆で再現する「自分 + Bullet」の操作傾向だけを探します。
 </p>
+
+<label for="crossBeanSelect">
+比較する豆（2種類以上）
+</label>
+
+<select
+id="crossBeanSelect"
+multiple
+size="6"
+style="width:100%; margin-bottom:14px"
+>
+<option value="">
+豆データを読み込み中…
+</option>
+</select>
 
 <button
 id="crossAnalyzeButton"
 class="btn blue"
 type="button"
 >
-全豆を横断して自分の焙煎傾向を分析
+選択した豆を横断して自分の焙煎傾向を分析
 </button>
 
 <div
@@ -1946,6 +1961,11 @@ const el = {
   beanAnalysis:
     document.getElementById(
       "beanAnalysis"
+    ),
+
+  crossBeanSelect:
+    document.getElementById(
+      "crossBeanSelect"
     ),
 
   crossAnalyzeButton:
@@ -4399,7 +4419,18 @@ function populateBeanSelects() {
   const previousFilter =
     el.filterBean.value;
 
+  const previousCross =
+    Array.from(
+      el.crossBeanSelect.selectedOptions
+    ).map(
+      (option) => option.value
+    );
+
   el.beanSelect.innerHTML =
+    optionHTML ||
+    '<option value="">豆情報なし</option>';
+
+  el.crossBeanSelect.innerHTML =
     optionHTML ||
     '<option value="">豆情報なし</option>';
 
@@ -4430,6 +4461,24 @@ function populateBeanSelects() {
     el.filterBean.value =
       previousFilter;
   }
+
+  const crossSelection =
+    previousCross.length
+      ? previousCross
+      : options.slice(0, 2).map(
+          (item) => item.key
+        );
+
+  Array.from(
+    el.crossBeanSelect.options
+  ).forEach(
+    (option) => {
+      option.selected =
+        crossSelection.includes(
+          option.value
+        );
+    }
+  );
 }
 
 
@@ -4974,13 +5023,35 @@ async function analyzeSelectedBean() {
 
 
 async function analyzeAcrossBeans() {
+  const selectedBeanKeys =
+    Array.from(
+      el.crossBeanSelect.selectedOptions
+    ).map(
+      (option) => option.value
+    ).filter(Boolean);
+
+  if (selectedBeanKeys.length < 2) {
+    setAnalysisOutput(
+      el.crossAnalysis,
+      "比較する豆を2種類以上選択してください。",
+      true
+    );
+
+    return;
+  }
+
   const entries =
-    historyEntries();
+    historyEntries().filter(
+      (entry) =>
+        selectedBeanKeys.includes(
+          entry.beanKey
+        )
+    );
 
   if (!entries.length) {
     setAnalysisOutput(
       el.crossAnalysis,
-      "分析対象の焙煎がありません。",
+      "選択した豆に分析対象の焙煎がありません。",
       true
     );
 
