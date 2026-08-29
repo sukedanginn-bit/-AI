@@ -112,10 +112,24 @@ export default {
           "未入力",
       };
 
+      const knowledgeLayers =
+        normalizeKnowledgeLayers(
+          body.knowledgeLayers
+        );
+
       return runOpenAI(
-        individualPrompt(packet),
+        knowledgePrompt(
+          individualPrompt(packet),
+          knowledgeLayers
+        ),
         env,
-        2600
+        2600,
+        {
+          useWebSearch:
+            needsWebSearch(
+              knowledgeLayers
+            ),
+        }
       );
     }
 
@@ -264,10 +278,24 @@ export default {
           ? crossBeanPrompt(experiments)
           : sameBeanPrompt(experiments);
 
+      const knowledgeLayers =
+        normalizeKnowledgeLayers(
+          body.knowledgeLayers
+        );
+
       return runOpenAI(
-        prompt,
+        knowledgePrompt(
+          prompt,
+          knowledgeLayers
+        ),
         env,
-        4200
+        4200,
+        {
+          useWebSearch:
+            needsWebSearch(
+              knowledgeLayers
+            ),
+        }
       );
     }
 
@@ -282,8 +310,35 @@ export default {
 async function runOpenAI(
   prompt,
   env,
-  maxTokens
+  maxTokens,
+  options = {}
 ) {
+  const requestBody = {
+    model:
+      "gpt-5.6-luna",
+
+    input:
+      prompt,
+
+    max_output_tokens:
+      maxTokens,
+
+    store:
+      false,
+  };
+
+  if (options.useWebSearch) {
+    requestBody.tools = [
+      { type: "web_search" },
+    ];
+
+    requestBody.include = [
+      "web_search_call.action.sources",
+    ];
+
+    requestBody.max_tool_calls = 4;
+  }
+
   const response =
     await fetch(
       "https://api.openai.com/v1/responses",
@@ -300,19 +355,9 @@ async function runOpenAI(
         },
 
         body:
-          JSON.stringify({
-            model:
-              "gpt-5.6-luna",
-
-            input:
-              prompt,
-
-            max_output_tokens:
-              maxTokens,
-
-            store:
-              false,
-          }),
+          JSON.stringify(
+            requestBody
+          ),
       }
     );
 
@@ -658,6 +703,92 @@ function summarizeRoast(
   }
 
   return summary;
+}
+
+
+const KNOWLEDGE_LAYER_LABELS = {
+  user_experiments:
+    "1. ユーザー自身の焙煎実験",
+  peer_reviewed:
+    "2. 査読論文・食品科学",
+  official:
+    "3. SCA/WCRC/Aillio等の公式資料",
+  experts:
+    "4. 大会優勝者・上位競技者・専門家の経験則",
+  ai_hypothesis:
+    "5. AIによる仮説",
+};
+
+
+function normalizeKnowledgeLayers(
+  value
+) {
+  const allowed =
+    Object.keys(
+      KNOWLEDGE_LAYER_LABELS
+    );
+
+  const selected =
+    Array.isArray(value)
+      ? value.filter(
+          (item) =>
+            allowed.includes(
+              String(item)
+            )
+        )
+      : [];
+
+  return Array.isArray(value)
+    ? Array.from(
+        new Set(selected)
+      )
+    : allowed;
+}
+
+
+function needsWebSearch(
+  layers
+) {
+  return layers.some(
+    (layer) =>
+      [
+        "peer_reviewed",
+        "official",
+        "experts",
+      ].includes(layer)
+  );
+}
+
+
+function knowledgePrompt(
+  prompt,
+  layers
+) {
+  const labels =
+    layers.map(
+      (layer) =>
+        KNOWLEDGE_LAYER_LABELS[layer]
+    );
+
+  return `
+選択された根拠層:
+${labels.join("\n")}
+
+必須ルール:
+- 選択されていない根拠層は使用しない。
+- 各主張を選択された根拠層ごとに明確に分離する。
+- 層1は提供されたユーザー自身の焙煎・カッピング記録だけを根拠にする。
+- 層2〜4を使用する場合はWeb検索を行い、本文中に資料名とURLを記載する。
+- 層2は査読論文または食品科学の一次資料を優先する。
+- 層3はSCA、WCRC、Aillio等の公式資料だけを根拠にする。
+- 層4は人物名、実績、発言元を明記し、経験則として扱う。
+- 層5は必ず「AIによる仮説」と表示し、事実として断定しない。
+- 根拠が見つからない層は「根拠を確認できず」と明記する。
+- 豆が異なる場合、具体的な焙煎条件を直接一般化しない。
+- 次回実験は原則1変数だけ変更する。
+
+${prompt}
+`;
 }
 
 
@@ -1687,6 +1818,31 @@ class="status hidden"
 id="bulkPreview"
 class="hidden"
 ></div>
+
+</section>
+
+
+<section class="card">
+
+<h2>
+📚 分析に使う知識層
+</h2>
+
+<p class="section-note muted">
+使用する根拠を選択してください。層2〜4を選ぶとWeb検索を使用します。
+</p>
+
+<div id="knowledgeLayerOptions" class="grid2">
+<label><input type="checkbox" name="knowledgeLayer" value="user_experiments" checked> 1. ユーザー自身の焙煎実験</label>
+<label><input type="checkbox" name="knowledgeLayer" value="peer_reviewed" checked> 2. 査読論文・食品科学</label>
+<label><input type="checkbox" name="knowledgeLayer" value="official" checked> 3. SCA/WCRC/Aillio等の公式資料</label>
+<label><input type="checkbox" name="knowledgeLayer" value="experts" checked> 4. 大会優勝者・上位競技者・専門家の経験則</label>
+<label><input type="checkbox" name="knowledgeLayer" value="ai_hypothesis" checked> 5. AIによる仮説</label>
+</div>
+
+<div id="knowledgeLayerMessage" class="status ok" style="margin-top:12px">
+5つの知識層を使用します。
+</div>
 
 </section>
 
@@ -4544,6 +4700,60 @@ function renderBeanStats() {
 }
 
 
+function getSelectedKnowledgeLayers() {
+  return Array.from(
+    document.querySelectorAll(
+      'input[name="knowledgeLayer"]:checked'
+    )
+  ).map(
+    (input) => input.value
+  );
+}
+
+
+function updateKnowledgeLayerMessage() {
+  const selected =
+    getSelectedKnowledgeLayers();
+
+  const message =
+    document.getElementById(
+      "knowledgeLayerMessage"
+    );
+
+  if (!message) return;
+
+  if (!selected.length) {
+    setStatus(
+      message,
+      "知識層を1つ以上選択してください。",
+      "warn"
+    );
+
+    return;
+  }
+
+  const usesWeb =
+    selected.some(
+      (layer) =>
+        [
+          "peer_reviewed",
+          "official",
+          "experts",
+        ].includes(layer)
+    );
+
+  setStatus(
+    message,
+    selected.length +
+      "つの知識層を使用" +
+      (usesWeb
+        ? " / Web検索あり"
+        : " / Web検索なし"),
+    "ok"
+  );
+}
+
+
 function historyEntries() {
   const lookup =
     buildBeanLookup();
@@ -4868,6 +5078,9 @@ async function analyzeSingleRoast(
 
               bean:
                 bean,
+
+              knowledgeLayers:
+                getSelectedKnowledgeLayers(),
             }),
         }
       );
@@ -4974,6 +5187,9 @@ async function analyzeSelectedBean() {
 
               entries:
                 entries,
+
+              knowledgeLayers:
+                getSelectedKnowledgeLayers(),
             }),
         }
       );
@@ -5086,6 +5302,9 @@ async function analyzeAcrossBeans() {
 
               entries:
                 entries,
+
+              knowledgeLayers:
+                getSelectedKnowledgeLayers(),
             }),
         }
       );
@@ -5264,6 +5483,19 @@ function goNextPage() {
       "smooth",
   });
 }
+
+
+document
+  .querySelectorAll(
+    'input[name="knowledgeLayer"]'
+  )
+  .forEach(
+    (input) =>
+      input.addEventListener(
+        "change",
+        updateKnowledgeLayerMessage
+      )
+  );
 
 
 el.reloadButton.addEventListener(
