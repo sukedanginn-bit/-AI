@@ -302,6 +302,16 @@ export default {
           body.knowledgeLayers
         );
 
+      const pdfInputs =
+        knowledgeLayers.includes(
+          "experts"
+        )
+          ? await loadKnowledgePdfInputs(
+              body.pdfKeys,
+              env
+            )
+          : [];
+
       return runOpenAI(
         knowledgePrompt(
           individualPrompt(packet),
@@ -314,6 +324,7 @@ export default {
             needsWebSearch(
               knowledgeLayers
             ),
+          pdfInputs,
         }
       );
     }
@@ -489,6 +500,16 @@ export default {
           body.knowledgeLayers
         );
 
+      const pdfInputs =
+        knowledgeLayers.includes(
+          "experts"
+        )
+          ? await loadKnowledgePdfInputs(
+              body.pdfKeys,
+              env
+            )
+          : [];
+
       return runOpenAI(
         knowledgePrompt(
           prompt,
@@ -501,6 +522,7 @@ export default {
             needsWebSearch(
               knowledgeLayers
             ),
+          pdfInputs,
         }
       );
     }
@@ -589,6 +611,119 @@ function pdfMetadata(
 }
 
 
+async function loadKnowledgePdfInputs(
+  value,
+  env
+) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const keys =
+    Array.from(
+      new Set(
+        value.map(String)
+      )
+    )
+      .filter(
+        (key) =>
+          key.startsWith(
+            "experience/"
+          )
+      )
+      .slice(0, 3);
+
+  if (!keys.length) {
+    return [];
+  }
+
+  if (!env.KNOWLEDGE_PDFS) {
+    throw new Error(
+      "KNOWLEDGE_PDFS R2バインディングが設定されていません"
+    );
+  }
+
+  const inputs = [];
+  let totalBytes = 0;
+
+  for (const key of keys) {
+    const object =
+      await env.KNOWLEDGE_PDFS.get(
+        key
+      );
+
+    if (!object) {
+      continue;
+    }
+
+    totalBytes +=
+      object.size || 0;
+
+    if (
+      totalBytes >
+      15 * 1024 * 1024
+    ) {
+      throw new Error(
+        "選択PDFの合計は15MB以下にしてください"
+      );
+    }
+
+    const buffer =
+      await object.arrayBuffer();
+
+    const metadata =
+      object.customMetadata || {};
+
+    inputs.push({
+      type: "input_file",
+      filename:
+        metadata.originalName ||
+        key.split("/").pop() ||
+        "document.pdf",
+      file_data:
+        "data:application/pdf;base64," +
+        arrayBufferToBase64(
+          buffer
+        ),
+    });
+  }
+
+  return inputs;
+}
+
+
+function arrayBufferToBase64(
+  buffer
+) {
+  const bytes =
+    new Uint8Array(buffer);
+
+  const chunkSize =
+    0x8000;
+
+  let binary = "";
+
+  for (
+    let offset = 0;
+    offset < bytes.length;
+    offset += chunkSize
+  ) {
+    binary +=
+      String.fromCharCode(
+        ...bytes.subarray(
+          offset,
+          Math.min(
+            offset + chunkSize,
+            bytes.length
+          )
+        )
+      );
+  }
+
+  return btoa(binary);
+}
+
+
 async function runOpenAI(
   prompt,
   env,
@@ -608,6 +743,24 @@ async function runOpenAI(
     store:
       false,
   };
+
+  if (
+    Array.isArray(options.pdfInputs) &&
+    options.pdfInputs.length
+  ) {
+    requestBody.input = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: prompt,
+          },
+          ...options.pdfInputs,
+        ],
+      },
+    ];
+  }
 
   if (options.useWebSearch) {
     requestBody.tools = [
@@ -1064,6 +1217,9 @@ ${labels.join("\n")}
 - 層2は査読論文または食品科学の一次資料を優先する。
 - 層3はSCA、WCRC、Aillio等の公式資料だけを根拠にする。
 - 層4は人物名、実績、発言元を明記し、経験則として扱う。
+- input_fileのPDFは「所有PDF由来」と明記し、ファイル名を示す。
+- 所有PDFの内容とWeb検索由来の経験則を混ぜずに分離する。
+- PDFの記述を査読論文や公式資料として勝手に格上げしない。
 - 層5は必ず「AIによる仮説」と表示し、事実として断定しない。
 - 根拠が見つからない層は「根拠を確認できず」と明記する。
 - 豆が異なる場合、具体的な焙煎条件を直接一般化しない。
@@ -5090,6 +5246,7 @@ function renderBeanStats() {
 
 
 let knowledgePdfs = [];
+let selectedKnowledgePdfKeys = new Set();
 
 
 function formatFileSize(
@@ -5142,6 +5299,14 @@ function renderPdfLibrary() {
         '<div class="roast" style="margin-bottom:10px">' +
         '<div class="roast-head">' +
         "<div>" +
+        '<label style="display:block; margin-bottom:6px">' +
+        '<input class="pdf-select-checkbox" type="checkbox" data-key="' +
+        escapeHTML(file.key) +
+        '"' +
+        (selectedKnowledgePdfKeys.has(file.key)
+          ? " checked"
+          : "") +
+        '> 分析に使用</label>' +
         "<strong>" +
         escapeHTML(
           file.title || file.name
@@ -5163,6 +5328,39 @@ function renderPdfLibrary() {
         "</div>" +
         "</div>"
     ).join("");
+
+  list.querySelectorAll(
+    ".pdf-select-checkbox"
+  ).forEach(
+    (checkbox) =>
+      checkbox.addEventListener(
+        "change",
+        () => {
+          const key =
+            checkbox.dataset.key;
+
+          if (checkbox.checked) {
+            if (
+              selectedKnowledgePdfKeys.size >= 3
+            ) {
+              checkbox.checked = false;
+              alert(
+                "分析に使用できるPDFは最大3冊です。"
+              );
+              return;
+            }
+
+            selectedKnowledgePdfKeys.add(
+              key
+            );
+          } else {
+            selectedKnowledgePdfKeys.delete(
+              key
+            );
+          }
+        }
+      )
+  );
 
   list.querySelectorAll(
     ".pdf-delete-button"
@@ -5204,6 +5402,23 @@ async function loadPdfLibrary() {
       Array.isArray(data.files)
         ? data.files
         : [];
+
+    const availableKeys =
+      new Set(
+        knowledgePdfs.map(
+          (file) => file.key
+        )
+      );
+
+    selectedKnowledgePdfKeys =
+      new Set(
+        Array.from(
+          selectedKnowledgePdfKeys
+        ).filter(
+          (key) =>
+            availableKeys.has(key)
+        )
+      );
 
     renderPdfLibrary();
 
@@ -5395,6 +5610,13 @@ async function deleteKnowledgePdf(
       "error"
     );
   }
+}
+
+
+function getSelectedKnowledgePdfKeys() {
+  return Array.from(
+    selectedKnowledgePdfKeys
+  );
 }
 
 
@@ -5779,6 +6001,9 @@ async function analyzeSingleRoast(
 
               knowledgeLayers:
                 getSelectedKnowledgeLayers(),
+
+              pdfKeys:
+                getSelectedKnowledgePdfKeys(),
             }),
         }
       );
@@ -5900,6 +6125,9 @@ async function analyzeSelectedBean() {
 
               knowledgeLayers:
                 getSelectedKnowledgeLayers(),
+
+              pdfKeys:
+                getSelectedKnowledgePdfKeys(),
             }),
         }
       );
@@ -6015,6 +6243,9 @@ async function analyzeAcrossBeans() {
 
               knowledgeLayers:
                 getSelectedKnowledgeLayers(),
+
+              pdfKeys:
+                getSelectedKnowledgePdfKeys(),
             }),
         }
       );
