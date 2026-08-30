@@ -52,7 +52,7 @@ export default {
 
       if (!env.KNOWLEDGE_PDFS) {
         return json(
-          { error: "KNOWLEDGE_PDFS R2バインディングが設定されていません" },
+          { error: "KNOWLEDGE_PDFS KVバインディングが設定されていません" },
           500
         );
       }
@@ -65,7 +65,7 @@ export default {
 
       return json({
         files:
-          listed.objects.map(
+          listed.keys.map(
             pdfMetadata
           ),
       });
@@ -91,7 +91,7 @@ export default {
 
       if (!env.KNOWLEDGE_PDFS) {
         return json(
-          { error: "KNOWLEDGE_PDFS R2バインディングが設定されていません" },
+          { error: "KNOWLEDGE_PDFS KVバインディングが設定されていません" },
           500
         );
       }
@@ -137,37 +137,36 @@ export default {
         "-" +
         safeName;
 
+      const metadata = {
+        originalName:
+          file.name.slice(0, 180),
+        title:
+          String(
+            form.get("title") ||
+            file.name
+          ).slice(0, 180),
+        author:
+          String(
+            form.get("author") ||
+            ""
+          ).slice(0, 180),
+        sourceType:
+          "owned_experience_pdf",
+        size: file.size,
+        uploaded:
+          new Date().toISOString(),
+      };
+
       await env.KNOWLEDGE_PDFS.put(
         key,
-        file,
-        {
-          httpMetadata: {
-            contentType:
-              "application/pdf",
-          },
-          customMetadata: {
-            originalName:
-              file.name.slice(0, 180),
-            title:
-              String(
-                form.get("title") ||
-                file.name
-              ).slice(0, 180),
-            author:
-              String(
-                form.get("author") ||
-                ""
-              ).slice(0, 180),
-            sourceType:
-              "owned_experience_pdf",
-          },
-        }
+        await file.arrayBuffer(),
+        { metadata }
       );
 
-      const saved =
-        await env.KNOWLEDGE_PDFS.head(
-          key
-        );
+      const saved = {
+        name: key,
+        metadata,
+      };
 
       return json(
         {
@@ -203,7 +202,7 @@ export default {
 
       if (!env.KNOWLEDGE_PDFS) {
         return json(
-          { error: "KNOWLEDGE_PDFS R2バインディングが設定されていません" },
+          { error: "KNOWLEDGE_PDFS KVバインディングが設定されていません" },
           500
         );
       }
@@ -583,14 +582,18 @@ function pdfMetadata(
   object
 ) {
   const metadata =
-    object?.customMetadata || {};
+    object?.metadata || {};
+
+  const key =
+    object?.key ||
+    object?.name ||
+    "";
 
   return {
-    key:
-      object?.key || "",
+    key,
     name:
       metadata.originalName ||
-      object?.key?.split("/").pop() ||
+      key.split("/").pop() ||
       "",
     title:
       metadata.title ||
@@ -602,11 +605,16 @@ function pdfMetadata(
       metadata.sourceType ||
       "owned_experience_pdf",
     size:
-      object?.size || 0,
+      Number(
+        metadata.size ||
+        object?.size ||
+        0
+      ),
     uploaded:
-      object?.uploaded
+      metadata.uploaded ||
+      (object?.uploaded
         ? object.uploaded.toISOString()
-        : "",
+        : ""),
   };
 }
 
@@ -639,7 +647,7 @@ async function loadKnowledgePdfInputs(
 
   if (!env.KNOWLEDGE_PDFS) {
     throw new Error(
-      "KNOWLEDGE_PDFS R2バインディングが設定されていません"
+      "KNOWLEDGE_PDFS KVバインディングが設定されていません"
     );
   }
 
@@ -648,16 +656,21 @@ async function loadKnowledgePdfInputs(
 
   for (const key of keys) {
     const object =
-      await env.KNOWLEDGE_PDFS.get(
-        key
+      await env.KNOWLEDGE_PDFS.getWithMetadata(
+        key,
+        { type: "arrayBuffer" }
       );
 
-    if (!object) {
+    if (!object?.value) {
       continue;
     }
 
     totalBytes +=
-      object.size || 0;
+      Number(
+        object.metadata?.size ||
+        object.value.byteLength ||
+        0
+      );
 
     if (
       totalBytes >
@@ -669,10 +682,10 @@ async function loadKnowledgePdfInputs(
     }
 
     const buffer =
-      await object.arrayBuffer();
+      object.value;
 
     const metadata =
-      object.customMetadata || {};
+      object.metadata || {};
 
     inputs.push({
       type: "input_file",
@@ -2329,7 +2342,7 @@ class="hidden"
 </h2>
 
 <p class="section-note muted">
-所有しているPDFを固定資料としてR2へ登録・更新できます。管理パスワードは保存されません。
+所有しているPDFを固定資料としてKVへ登録・更新できます。管理パスワードは保存されません。
 </p>
 
 <details>
