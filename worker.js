@@ -4803,40 +4803,70 @@ function saveBulkPreview() {
 function formatSeconds(
   value
 ) {
+  if (
+    value === null ||
+    value === undefined ||
+    (
+      typeof value === "string" &&
+      value.trim() === ""
+    )
+  ) {
+    return "—";
+  }
+
   const n =
     Number(value);
 
   if (
-    !Number.isFinite(n)
+    !Number.isFinite(n) ||
+    n < 0
   ) {
-    return "-";
+    return "—";
   }
+
+  const roundedTenths =
+    Math.round(
+      n *
+      10
+    );
 
   const minutes =
     Math.floor(
-      n /
-      60
+      roundedTenths /
+      600
     );
 
-  const seconds =
-    Math.round(
-      (
-        n -
-        minutes *
-        60
-      ) *
+  const secondTenths =
+    roundedTenths -
+    minutes *
+    600;
+
+  const wholeSeconds =
+    Math.floor(
+      secondTenths /
       10
-    ) /
+    );
+
+  const decimal =
+    secondTenths %
     10;
+
+  const secondsText =
+    String(wholeSeconds)
+      .padStart(
+        2,
+        "0"
+      ) +
+    (
+      decimal
+        ? "." + decimal
+        : ""
+    );
 
   return (
     minutes +
     ":" +
-    String(seconds)
-      .padStart(
-        4,
-        "0"
-      )
+    secondsText
   );
 }
 
