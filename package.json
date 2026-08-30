@@ -1,0 +1,13 @@
+{
+  "name": "roast-world-analyzer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check:worker": "node --check worker.js",
+    "check:browser": "node scripts/check-browser-js.mjs",
+    "check:routes": "node scripts/check-routes.mjs",
+    "test": "node --test",
+    "verify": "npm run check:worker && npm run check:browser && npm run check:routes && npm test"
+  }
+}
+
