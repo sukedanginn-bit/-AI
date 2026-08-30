@@ -2164,6 +2164,23 @@ label {
   padding-top:18px;
 }
 
+.bean-history-panel + .bean-history-panel {
+  margin-top:18px;
+  padding-top:18px;
+  border-top:1px solid var(--border);
+}
+
+.bean-history-panel-header {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+
+.bean-history-panel-header h3 {
+  margin:0;
+}
+
 .bean-history-charts {
   display:grid;
   grid-template-columns:repeat(2,minmax(0,1fr));
@@ -2515,28 +2532,7 @@ class="bean-history hidden"
 各点は個別焙煎の集計値です。焙煎中の温度・RoR曲線ではありません。
 </p>
 
-<div id="beanHistoryMessage" class="status hidden"></div>
-
-<div id="beanHistoryCharts" class="bean-history-charts"></div>
-
-<div class="bean-history-table-wrap">
-<table class="bean-history-table">
-<thead>
-<tr>
-<th>日付</th>
-<th>焙煎</th>
-<th>Preheat</th>
-<th>Total</th>
-<th>First Crack</th>
-<th>Development</th>
-<th>DTR</th>
-<th>FC温度</th>
-<th>テイスティングメモ</th>
-</tr>
-</thead>
-<tbody id="beanHistoryTableBody"></tbody>
-</table>
-</div>
+<div id="beanHistoryPanels"></div>
 
 </div>
 
@@ -2757,19 +2753,9 @@ const el = {
       "beanHistory"
     ),
 
-  beanHistoryMessage:
+  beanHistoryPanels:
     document.getElementById(
-      "beanHistoryMessage"
-    ),
-
-  beanHistoryCharts:
-    document.getElementById(
-      "beanHistoryCharts"
-    ),
-
-  beanHistoryTableBody:
-    document.getElementById(
-      "beanHistoryTableBody"
+      "beanHistoryPanels"
     ),
 
   beanAnalyzeButton:
@@ -5231,185 +5217,46 @@ function renderMetricChart(
 }
 
 
+function renderBeanHistoryPanel(bean, rows) {
+  const table = rows.map((row) => {
+    const m = row.metrics;
+    const cell = (value, suffix = "") =>
+      "<td>" + escapeHTML(historyDisplayValue(value, suffix)) + "</td>";
+    return "<tr>" +
+      "<td>" + escapeHTML(row.dateLabel) + "</td>" +
+      "<td>" + escapeHTML(row.label) + "</td>" +
+      cell(m.preheat, " ℃") + cell(m.total) + cell(m.fc) +
+      cell(m.development) + cell(m.dtr) + cell(m.fcTemp, " ℃") +
+      '<td class="note-cell">' + escapeHTML(String(row.tasting ?? "").trim() || "—") + "</td></tr>";
+  }).join("");
+  const charts = rows.length < 2
+    ? '<div class="status warn">比較グラフには2件以上の焙煎が必要です。</div>'
+    : renderMetricChart("焙煎進行時間", rows, [
+        {key:"totalSeconds", label:"Total", color:"#126b3a"},
+        {key:"firstCrackSeconds", label:"First Crack", color:"#145a8d"},
+      ], formatSeconds) +
+      renderMetricChart("Development Time", rows,
+        [{key:"developmentSeconds", label:"Development", color:"#a35f00"}], formatSeconds) +
+      renderMetricChart("Development Ratio", rows,
+        [{key:"dtrPercent", label:"DTR", color:"#7b3fa1"}], (value) => round(value,1) + "%");
+  return '<section class="bean-history-panel">' +
+    '<div class="bean-history-panel-header"><h3>' + escapeHTML(bean.label) +
+    '</h3><span class="pill">' + rows.length + '焙煎</span></div>' +
+    (rows.length ? '<div class="bean-history-charts">' + charts + '</div>' :
+      '<div class="status warn">この豆の焙煎データはありません。</div>') +
+    (rows.length ? '<div class="bean-history-table-wrap"><table class="bean-history-table"><thead><tr>' +
+      '<th>日付</th><th>焙煎</th><th>Preheat</th><th>Total</th><th>First Crack</th><th>Development</th><th>DTR</th><th>FC温度</th><th>テイスティングメモ</th>' +
+      '</tr></thead><tbody>' + table + '</tbody></table></div>' : '') + '</section>';
+}
+
 function renderBeanHistory() {
-  const beanKeys =
-    Array.from(
-      el.beanSelect.selectedOptions
-    ).map(
-      (option) => option.value
-    ).filter(Boolean);
-
-  el.beanHistory.classList.add(
-    "hidden"
-  );
-  el.beanHistoryMessage.className =
-    "status hidden";
-  el.beanHistoryCharts.innerHTML = "";
-  el.beanHistoryTableBody.innerHTML = "";
-
-  if (!beanKeys.length) {
-    return;
-  }
-
-  el.beanHistory.classList.remove(
-    "hidden"
-  );
-
-  if (beanKeys.length !== 1) {
-    setStatus(
-      el.beanHistoryMessage,
-      "過去焙煎比較は豆を1種類だけ選択すると表示されます。",
-      "warn"
-    );
-    return;
-  }
-
-  const selectedRoasts =
-    roasts.filter(
-      (roast) =>
-        inferBeanKey(roast) ===
-        beanKeys[0]
-    );
-
-  const rows =
-    buildBeanHistoryRows(
-      selectedRoasts
-    );
-
-  if (!rows.length) {
-    setStatus(
-      el.beanHistoryMessage,
-      "この豆の焙煎データはありません。",
-      "warn"
-    );
-    return;
-  }
-
-  el.beanHistoryTableBody.innerHTML =
-    rows.map(
-      (row) => {
-        const metrics =
-          row.metrics;
-
-        return (
-          "<tr>" +
-          "<td>" +
-          escapeHTML(row.dateLabel) +
-          "</td>" +
-          "<td>" +
-          escapeHTML(row.label) +
-          "</td>" +
-          "<td>" +
-          escapeHTML(
-            historyDisplayValue(
-              metrics.preheat,
-              " ℃"
-            )
-          ) +
-          "</td>" +
-          "<td>" +
-          escapeHTML(
-            historyDisplayValue(
-              metrics.total
-            )
-          ) +
-          "</td>" +
-          "<td>" +
-          escapeHTML(
-            historyDisplayValue(
-              metrics.fc
-            )
-          ) +
-          "</td>" +
-          "<td>" +
-          escapeHTML(
-            historyDisplayValue(
-              metrics.development
-            )
-          ) +
-          "</td>" +
-          "<td>" +
-          escapeHTML(
-            historyDisplayValue(
-              metrics.dtr
-            )
-          ) +
-          "</td>" +
-          "<td>" +
-          escapeHTML(
-            historyDisplayValue(
-              metrics.fcTemp,
-              " ℃"
-            )
-          ) +
-          "</td>" +
-          '<td class="note-cell">' +
-          escapeHTML(
-            String(
-              row.tasting ?? ""
-            ).trim() ||
-            "—"
-          ) +
-          "</td>" +
-          "</tr>"
-        );
-      }
-    ).join("");
-
-  const secondNote =
-    rows.length < 2
-      ? '<div class="status warn">比較グラフには2件以上の焙煎が必要です。</div>'
-      : "";
-
-  if (rows.length < 2) {
-    el.beanHistoryCharts.innerHTML =
-      secondNote;
-    return;
-  }
-
-  el.beanHistoryCharts.innerHTML =
-    renderMetricChart(
-      "焙煎進行時間",
-      rows,
-      [
-        {
-          key:"totalSeconds",
-          label:"Total",
-          color:"#126b3a",
-        },
-        {
-          key:"firstCrackSeconds",
-          label:"First Crack",
-          color:"#145a8d",
-        },
-      ],
-      formatSeconds
-    ) +
-    renderMetricChart(
-      "Development Time",
-      rows,
-      [
-        {
-          key:"developmentSeconds",
-          label:"Development",
-          color:"#a35f00",
-        },
-      ],
-      formatSeconds
-    ) +
-    renderMetricChart(
-      "Development Ratio",
-      rows,
-      [
-        {
-          key:"dtrPercent",
-          label:"DTR",
-          color:"#7b3fa1",
-        },
-      ],
-      (value) =>
-        round(value,1) + "%"
-    );
+  const beans = Array.from(el.beanSelect.selectedOptions)
+    .map((option) => ({ key: option.value, label: option.textContent.replace(/\s*—\s*\d+焙煎\s*$/, "").trim() }))
+    .filter((bean) => bean.key);
+  el.beanHistory.classList.toggle("hidden", !beans.length);
+  el.beanHistoryPanels.innerHTML = beans.map((bean) =>
+    renderBeanHistoryPanel(bean, buildBeanHistoryRows(roasts.filter((roast) => inferBeanKey(roast) === bean.key)))
+  ).join("");
 }
 
 

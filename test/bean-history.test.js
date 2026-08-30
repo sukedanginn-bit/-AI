@@ -73,3 +73,22 @@ test("焙煎比較の有効な数値は0を含めて保持する", () => {
   assert.equal(finiteNumberOrNull("0"), 0);
   assert.equal(finiteNumberOrNull("198.5"), 198.5);
 });
+
+test("複数豆の履歴は豆ごとの独立パネルとして描画する", () => {
+  const start = workerSource.indexOf("function renderBeanHistory() {");
+  const end = workerSource.indexOf("function renderRoastList()", start);
+  const source = workerSource.slice(start, end);
+  assert.match(source, /selectedOptions/);
+  assert.match(source, /renderBeanHistoryPanel/);
+  assert.match(source, /inferBeanKey\(roast\) === bean\.key/);
+  assert.match(source, /beanHistoryPanels\.innerHTML/);
+});
+
+test("複数豆の表示は空の豆で全体を中断しない", () => {
+  const start = workerSource.indexOf("function renderBeanHistoryPanel(");
+  const end = workerSource.indexOf("function renderRoastList()", start);
+  const source = workerSource.slice(start, end);
+  assert.match(source, /rows\.length \? /);
+  assert.match(source, /この豆の焙煎データはありません/);
+  assert.match(source, /比較グラフには2件以上の焙煎が必要です/);
+});
