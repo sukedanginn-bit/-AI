@@ -25,6 +25,67 @@ npm run verify
 
 Worker、ブラウザ側JavaScript、既存APIルート、データパイプラインのテストをまとめて実行します。
 
+## Cloudflareへの自動デプロイ
+
+このリポジトリの`main`ブランチをコードの唯一の最新版として扱い、Cloudflare Workers Buildsから既存Worker `ancient-art-ec6b`へデプロイします。Cloudflareのコード編集画面へ`worker.js`を手動で貼り付けないでください。
+
+### リポジトリ側の設定
+
+`wrangler.jsonc`には、Cloudflare Dashboardで確認した既存Workerの設定を記載しています。
+
+- Worker名: `ancient-art-ec6b`
+- エントリーポイント: `worker.js`
+- Compatibility date: 既存Workerと同じ値
+- Workers.dev URL: 既存Workerと同じく有効
+- `KNOWLEDGE_PDFS`: 既存のWorkers KV namespaceへ接続
+- `keep_vars`: Dashboard側の通常変数を意図せず消さないため有効
+
+KV namespace IDはSecretではありませんが、既存データを保持するために重要です。値を推測したり、IDなしのbindingへ変更したり、新しいnamespaceを作ったりしないでください。
+
+`ROASTWORLD_API_TOKEN`、`OPENAI_API_KEY`、`PDF_ADMIN_PASSWORD`などのSecret値は`wrangler.jsonc`やGitHubへ書きません。Cloudflare Dashboardに保存済みのSecretをそのまま使用します。
+
+### GitHub接続前の確認
+
+リポジトリ直下で次を実行します。
+
+```powershell
+npm install
+npm run verify
+npm run deploy:dry-run
+```
+
+すべて成功するまでGitHub自動デプロイを有効にしないでください。
+
+### 既存WorkerをGitHubへ接続する手順
+
+1. Cloudflare Dashboardで「Workers & Pages」を開きます。
+2. 既存Worker `ancient-art-ec6b`を選択します。
+3. 「Settings」→「Builds」を開き、GitHubの「Connect」を選択します。
+4. Cloudflare GitHub Appを承認し、リポジトリ `sukedanginn-bit/-AI`を選択します。
+5. Production branchを`main`にします。
+6. Root directoryはリポジトリ直下のままにします。サブディレクトリは指定しません。
+7. Build commandを`npm run verify`にします。
+8. Deploy commandを`npx wrangler deploy`にします。
+9. 最初はnon-production branch buildsを無効にします。
+10. 保存前にWorker名、Compatibility date、Workers.dev URL、Custom Domain／Route、3つのSecret名、`KNOWLEDGE_PDFS`の接続先をもう一度確認します。
+
+現在はWorkers.dev URLが有効で、Custom DomainとWorker Routeはありません。この公開状態を維持するため、`wrangler.jsonc`では`workers_dev`を明示しています。将来Custom DomainやRouteを追加する場合は、自動デプロイ設定とは別の変更として扱ってください。
+
+接続後は`main`へのpushで検証と本番デプロイが実行されます。アプリのコード変更とデプロイ設定の初回導入を同じコミットに混ぜないでください。
+
+### 初回デプロイ後の確認
+
+CloudflareのBuildが成功したら、最低限以下を確認します。
+
+- トップ画面が表示される
+- `/api/roasts`と`/api/beans`が従来どおり応答する
+- Roast.Worldの焙煎取得と豆選択が動く
+- AI分析が動く
+- PDF一覧に既存データが残り、取得できる
+- `KNOWLEDGE_PDFS`が以前と同じKV namespaceを指している
+
+問題が起きた場合はCloudflareの「Deployments」から直前の正常なdeploymentへロールバックし、原因を確認します。
+
 ## Google側で今後必要になる設定
 
 1. Google Cloud Consoleでプロジェクトを作成します。

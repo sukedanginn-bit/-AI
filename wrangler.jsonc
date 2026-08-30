@@ -1,0 +1,14 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ancient-art-ec6b",
+  "main": "worker.js",
+  "compatibility_date": "2026-08-24",
+  "workers_dev": true,
+  "keep_vars": true,
+  "kv_namespaces": [
+    {
+      "binding": "KNOWLEDGE_PDFS",
+      "id": "8d7921a1d94548739b0e76f0394e3f83"
+    }
+  ]
+}
