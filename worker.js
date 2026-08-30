@@ -2158,6 +2158,68 @@ label {
   margin-bottom:14px;
 }
 
+.bean-history {
+  margin-top:18px;
+  border-top:1px solid var(--border);
+  padding-top:18px;
+}
+
+.bean-history-charts {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:12px;
+  margin:12px 0 16px;
+}
+
+.bean-history-chart {
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:12px;
+  background:#fafaf8;
+}
+
+.bean-history-chart h4 {
+  margin:0 0 6px;
+}
+
+.bean-history-chart svg {
+  display:block;
+  width:100%;
+  min-width:420px;
+  height:auto;
+}
+
+.bean-history-chart-scroll,
+.bean-history-table-wrap {
+  overflow-x:auto;
+}
+
+.bean-history-table {
+  width:100%;
+  min-width:980px;
+  border-collapse:collapse;
+  font-size:13px;
+}
+
+.bean-history-table th,
+.bean-history-table td {
+  border:1px solid var(--border);
+  padding:8px 9px;
+  text-align:left;
+  vertical-align:top;
+}
+
+.bean-history-table th {
+  background:#f0f3ef;
+  white-space:nowrap;
+}
+
+.bean-history-table .note-cell {
+  min-width:220px;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+}
+
 @media(max-width:760px) {
   .container {
     padding:12px;
@@ -2168,6 +2230,10 @@ label {
   }
 
   .grid2 {
+    grid-template-columns:1fr;
+  }
+
+  .bean-history-charts {
     grid-template-columns:1fr;
   }
 
@@ -2439,6 +2505,42 @@ class="status loading"
 </div>
 
 <div
+id="beanHistory"
+class="bean-history hidden"
+>
+
+<h3>選択豆の過去焙煎比較</h3>
+
+<p class="muted small">
+各点は個別焙煎の集計値です。焙煎中の温度・RoR曲線ではありません。
+</p>
+
+<div id="beanHistoryMessage" class="status hidden"></div>
+
+<div id="beanHistoryCharts" class="bean-history-charts"></div>
+
+<div class="bean-history-table-wrap">
+<table class="bean-history-table">
+<thead>
+<tr>
+<th>日付</th>
+<th>焙煎</th>
+<th>Preheat</th>
+<th>Total</th>
+<th>First Crack</th>
+<th>Development</th>
+<th>DTR</th>
+<th>FC温度</th>
+<th>テイスティングメモ</th>
+</tr>
+</thead>
+<tbody id="beanHistoryTableBody"></tbody>
+</table>
+</div>
+
+</div>
+
+<div
 class="toolbar"
 style="margin-top:14px"
 >
@@ -2648,6 +2750,26 @@ const el = {
   beanStats:
     document.getElementById(
       "beanStats"
+    ),
+
+  beanHistory:
+    document.getElementById(
+      "beanHistory"
+    ),
+
+  beanHistoryMessage:
+    document.getElementById(
+      "beanHistoryMessage"
+    ),
+
+  beanHistoryCharts:
+    document.getElementById(
+      "beanHistoryCharts"
+    ),
+
+  beanHistoryTableBody:
+    document.getElementById(
+      "beanHistoryTableBody"
     ),
 
   beanAnalyzeButton:
@@ -4719,6 +4841,28 @@ function formatSeconds(
 }
 
 
+function finiteNumberOrNull(
+  value
+) {
+  if (
+    value === null ||
+    value === undefined ||
+    (
+      typeof value === "string" &&
+      value.trim() === ""
+    )
+  ) {
+    return null;
+  }
+
+  const number = Number(value);
+
+  return Number.isFinite(number)
+    ? number
+    : null;
+}
+
+
 function roastMetrics(
   roast
 ) {
@@ -4730,6 +4874,16 @@ function roastMetrics(
   const fc =
     Number(
       roast.firstCrackTime
+    );
+
+  const preheatValue =
+    finiteNumberOrNull(
+      roast.preheatTemperature
+    );
+
+  const fcTempValue =
+    finiteNumberOrNull(
+      roast.firstCrackTemp
     );
 
   const development =
@@ -4782,7 +4936,450 @@ function roastMetrics(
 
     fcTemp:
       roast.firstCrackTemp,
+
+    totalSeconds:
+      Number.isFinite(total)
+        ? total
+        : null,
+
+    firstCrackSeconds:
+      Number.isFinite(fc)
+        ? fc
+        : null,
+
+    developmentSeconds:
+      development,
+
+    dtrPercent:
+      dtr,
+
+    preheatValue,
+
+    fcTempValue,
   };
+}
+
+
+function buildBeanHistoryRows(
+  selectedRoasts
+) {
+  return sortOldestFirst(
+    [
+      ...selectedRoasts
+    ]
+  ).map(
+    (roast) => {
+      const uid =
+        getUid(roast);
+
+      const metrics =
+        roastMetrics(roast);
+
+      return {
+        uid,
+        label:
+          roastLabel(roast),
+        dateLabel:
+          fullDateTime(roast),
+        metrics,
+        tasting:
+          getTasting(uid),
+      };
+    }
+  );
+}
+
+
+function historyDisplayValue(
+  value,
+  suffix = ""
+) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === "" ||
+    value === "-"
+  ) {
+    return "—";
+  }
+
+  return (
+    String(value) +
+    suffix
+  );
+}
+
+
+function renderMetricChart(
+  title,
+  rows,
+  series,
+  formatter
+) {
+  const width = 760;
+  const height = 250;
+  const left = 52;
+  const right = 16;
+  const top = 28;
+  const bottom = 48;
+  const plotWidth =
+    width - left - right;
+  const plotHeight =
+    height - top - bottom;
+
+  const values = [];
+
+  for (const row of rows) {
+    for (const item of series) {
+      const value =
+        row.metrics[
+          item.key
+        ];
+
+      if (
+        Number.isFinite(value)
+      ) {
+        values.push(value);
+      }
+    }
+  }
+
+  if (!values.length) {
+    return (
+      '<div class="bean-history-chart">' +
+      "<h4>" +
+      escapeHTML(title) +
+      "</h4>" +
+      '<div class="muted small">描画できる値がありません。</div>' +
+      "</div>"
+    );
+  }
+
+  const maxValue =
+    Math.max(
+      ...values,
+      1
+    );
+
+  const xAt =
+    (index) =>
+      rows.length <= 1
+        ? left + plotWidth / 2
+        : left +
+          plotWidth *
+          index /
+          (rows.length - 1);
+
+  const yAt =
+    (value) =>
+      top +
+      plotHeight *
+      (1 - value / maxValue);
+
+  let svg =
+    '<svg viewBox="0 0 ' +
+    width +
+    " " +
+    height +
+    '" role="img" aria-label="' +
+    escapeHTML(title) +
+    '">';
+
+  for (let tick = 0; tick <= 4; tick++) {
+    const value =
+      maxValue * tick / 4;
+    const y = yAt(value);
+
+    svg +=
+      '<line x1="' + left +
+      '" y1="' + y +
+      '" x2="' + (width - right) +
+      '" y2="' + y +
+      '" stroke="#ddddda" />' +
+      '<text x="' + (left - 7) +
+      '" y="' + (y + 4) +
+      '" text-anchor="end" font-size="11" fill="#686868">' +
+      escapeHTML(
+        formatter(value)
+      ) +
+      "</text>";
+  }
+
+  const labelStep =
+    Math.max(
+      1,
+      Math.ceil(
+        rows.length / 6
+      )
+    );
+
+  rows.forEach(
+    (row,index) => {
+      if (
+        index % labelStep === 0 ||
+        index === rows.length - 1
+      ) {
+        svg +=
+          '<text x="' + xAt(index) +
+          '" y="' + (height - 20) +
+          '" text-anchor="middle" font-size="10" fill="#686868">' +
+          escapeHTML(row.label) +
+          "</text>";
+      }
+    }
+  );
+
+  for (const item of series) {
+    let previous = null;
+
+    rows.forEach(
+      (row,index) => {
+        const value =
+          row.metrics[item.key];
+
+        if (!Number.isFinite(value)) {
+          previous = null;
+          return;
+        }
+
+        const point = {
+          x: xAt(index),
+          y: yAt(value),
+        };
+
+        if (previous) {
+          svg +=
+            '<line x1="' + previous.x +
+            '" y1="' + previous.y +
+            '" x2="' + point.x +
+            '" y2="' + point.y +
+            '" stroke="' + item.color +
+            '" stroke-width="2" />';
+        }
+
+        svg +=
+          '<circle cx="' + point.x +
+          '" cy="' + point.y +
+          '" r="3.5" fill="' + item.color +
+          '"><title>' +
+          escapeHTML(
+            row.dateLabel +
+            " / " +
+            item.label +
+            ": " +
+            formatter(value)
+          ) +
+          "</title></circle>";
+
+        previous = point;
+      }
+    );
+  }
+
+  svg += "</svg>";
+
+  const legend =
+    series.map(
+      (item) =>
+        '<span class="pill"><span style="color:' +
+        item.color +
+        '">●</span> ' +
+        escapeHTML(item.label) +
+        "</span>"
+    ).join("");
+
+  return (
+    '<div class="bean-history-chart">' +
+    "<h4>" +
+    escapeHTML(title) +
+    "</h4>" +
+    legend +
+    '<div class="bean-history-chart-scroll">' +
+    svg +
+    "</div></div>"
+  );
+}
+
+
+function renderBeanHistory() {
+  const beanKeys =
+    Array.from(
+      el.beanSelect.selectedOptions
+    ).map(
+      (option) => option.value
+    ).filter(Boolean);
+
+  el.beanHistory.classList.add(
+    "hidden"
+  );
+  el.beanHistoryMessage.className =
+    "status hidden";
+  el.beanHistoryCharts.innerHTML = "";
+  el.beanHistoryTableBody.innerHTML = "";
+
+  if (!beanKeys.length) {
+    return;
+  }
+
+  el.beanHistory.classList.remove(
+    "hidden"
+  );
+
+  if (beanKeys.length !== 1) {
+    setStatus(
+      el.beanHistoryMessage,
+      "過去焙煎比較は豆を1種類だけ選択すると表示されます。",
+      "warn"
+    );
+    return;
+  }
+
+  const selectedRoasts =
+    roasts.filter(
+      (roast) =>
+        inferBeanKey(roast) ===
+        beanKeys[0]
+    );
+
+  const rows =
+    buildBeanHistoryRows(
+      selectedRoasts
+    );
+
+  if (!rows.length) {
+    setStatus(
+      el.beanHistoryMessage,
+      "この豆の焙煎データはありません。",
+      "warn"
+    );
+    return;
+  }
+
+  el.beanHistoryTableBody.innerHTML =
+    rows.map(
+      (row) => {
+        const metrics =
+          row.metrics;
+
+        return (
+          "<tr>" +
+          "<td>" +
+          escapeHTML(row.dateLabel) +
+          "</td>" +
+          "<td>" +
+          escapeHTML(row.label) +
+          "</td>" +
+          "<td>" +
+          escapeHTML(
+            historyDisplayValue(
+              metrics.preheat,
+              " ℃"
+            )
+          ) +
+          "</td>" +
+          "<td>" +
+          escapeHTML(
+            historyDisplayValue(
+              metrics.total
+            )
+          ) +
+          "</td>" +
+          "<td>" +
+          escapeHTML(
+            historyDisplayValue(
+              metrics.fc
+            )
+          ) +
+          "</td>" +
+          "<td>" +
+          escapeHTML(
+            historyDisplayValue(
+              metrics.development
+            )
+          ) +
+          "</td>" +
+          "<td>" +
+          escapeHTML(
+            historyDisplayValue(
+              metrics.dtr
+            )
+          ) +
+          "</td>" +
+          "<td>" +
+          escapeHTML(
+            historyDisplayValue(
+              metrics.fcTemp,
+              " ℃"
+            )
+          ) +
+          "</td>" +
+          '<td class="note-cell">' +
+          escapeHTML(
+            String(
+              row.tasting ?? ""
+            ).trim() ||
+            "—"
+          ) +
+          "</td>" +
+          "</tr>"
+        );
+      }
+    ).join("");
+
+  const secondNote =
+    rows.length < 2
+      ? '<div class="status warn">比較グラフには2件以上の焙煎が必要です。</div>'
+      : "";
+
+  if (rows.length < 2) {
+    el.beanHistoryCharts.innerHTML =
+      secondNote;
+    return;
+  }
+
+  el.beanHistoryCharts.innerHTML =
+    renderMetricChart(
+      "焙煎進行時間",
+      rows,
+      [
+        {
+          key:"totalSeconds",
+          label:"Total",
+          color:"#126b3a",
+        },
+        {
+          key:"firstCrackSeconds",
+          label:"First Crack",
+          color:"#145a8d",
+        },
+      ],
+      formatSeconds
+    ) +
+    renderMetricChart(
+      "Development Time",
+      rows,
+      [
+        {
+          key:"developmentSeconds",
+          label:"Development",
+          color:"#a35f00",
+        },
+      ],
+      formatSeconds
+    ) +
+    renderMetricChart(
+      "Development Ratio",
+      rows,
+      [
+        {
+          key:"dtrPercent",
+          label:"DTR",
+          color:"#7b3fa1",
+        },
+      ],
+      (value) =>
+        round(value,1) + "%"
+    );
 }
 
 
@@ -5196,6 +5793,8 @@ function renderBeanStats() {
     ).map(
       (option) => option.value
     ).filter(Boolean);
+
+  renderBeanHistory();
 
   if (!beanKeys.length) {
     setStatus(
