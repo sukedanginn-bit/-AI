@@ -2202,6 +2202,28 @@ label {
   margin-bottom:14px;
 }
 
+.mode-tabs { display:flex; gap:8px; margin:14px 0; }
+.mode-tab { border:1px solid #b8c9bf; background:#f4f7f5; color:#24543a; padding:9px 16px; border-radius:999px; cursor:pointer; font-weight:700; }
+.mode-tab.active { background:#126b3a; color:#fff; border-color:#126b3a; }
+.consult-flow { display:grid; gap:16px; }
+.consult-section { border:1px solid #d8e2dc; border-radius:14px; padding:16px; background:#fbfcfb; }
+.consult-section h3 { margin-top:0; }
+.consult-reference-card { border-left:5px solid #126b3a; }
+.consult-after-list { display:grid; gap:12px; }
+.consult-after-card { border:1px solid #d6ddd8; border-radius:12px; padding:14px; background:#fff; }
+.consult-after-card h4 { margin:0 0 8px; }
+.consult-differences { margin:10px 0; padding:10px 12px; background:#f2f5f3; border-radius:9px; }
+.consult-differences ul { margin:6px 0 0; padding-left:20px; }
+.consult-fields { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.consult-rating { display:flex; flex-wrap:wrap; gap:10px; margin-top:8px; }
+.consult-rating label { display:flex; align-items:center; gap:5px; font-weight:600; }
+.consult-detail { margin-top:12px; }
+.consult-detail summary { cursor:pointer; font-weight:700; color:#145a8d; }
+.consult-events { display:flex; flex-wrap:wrap; gap:7px; margin:10px 0; }
+.consult-question { border:2px solid #126b3a; background:#f2fbf5; }
+.consult-empty { color:#686868; }
+@media(max-width:760px) { .consult-fields { grid-template-columns:1fr; } }
+
 
 .bean-history {
   margin-top:18px;
@@ -2697,6 +2719,13 @@ class="card analysis-card"
 原則として同じ豆・同じロットとして分類した履歴だけを使います。
 </p>
 
+<div class="mode-tabs" role="tablist" aria-label="同一豆分析の表示モード">
+<button id="analysisModeButton" class="mode-tab active" type="button" role="tab" aria-selected="true">Analysis</button>
+<button id="consultModeButton" class="mode-tab" type="button" role="tab" aria-selected="false">Consult / 経験者相談</button>
+</div>
+
+<div id="analysisModePanel">
+
 <div class="grid2">
 
 <div>
@@ -2771,6 +2800,35 @@ type="button"
 id="beanAnalysis"
 class="analysis-output hidden"
 ></div>
+
+</div>
+
+<div id="consultModePanel" class="consult-flow hidden">
+  <div class="consult-section">
+    <label for="consultBeanSelect">相談する豆（1種類）</label>
+    <select id="consultBeanSelect"><option value="">豆データを読み込み中…</option></select>
+  </div>
+  <section class="consult-section consult-reference-card">
+    <h3>REFERENCE ROAST</h3>
+    <label for="consultReferenceSelect">現在の基準となる焙煎</label>
+    <select id="consultReferenceSelect"><option value="">豆を選択してください</option></select>
+    <div id="consultReferenceDetail" class="consult-empty" style="margin-top:14px">Reference Roastを選択してください。</div>
+  </section>
+  <section class="consult-section">
+    <h3>AFTER REFERENCE</h3>
+    <p class="muted small">ユーザーが確定した「主な変更」を優先表示します。検出差分は意図的な変更を意味しません。</p>
+    <div id="consultAfterList" class="consult-after-list consult-empty">Reference Roastを選択してください。</div>
+  </section>
+  <section class="consult-section">
+    <h3>TASTE / RESULT CHANGE</h3>
+    <div id="consultTasteSummary" class="consult-empty">味の変化が入力されると、ここに時系列で整理されます。</div>
+  </section>
+  <section class="consult-section consult-question">
+    <h3>ASK THE ROASTER</h3>
+    <label for="consultAsk">経験者へ聞きたいこと</label>
+    <textarea id="consultAsk" maxlength="800" placeholder="例：Reference Roastの華やかさと甘さを維持しながら、舌の乾きとWatery finishを改善するには、次に何を1つ変更するのが妥当でしょうか？"></textarea>
+  </section>
+</div>
 
 </section>
 
@@ -2987,6 +3045,17 @@ const el = {
       "beanAnalysis"
     ),
 
+  analysisModeButton: document.getElementById("analysisModeButton"),
+  consultModeButton: document.getElementById("consultModeButton"),
+  analysisModePanel: document.getElementById("analysisModePanel"),
+  consultModePanel: document.getElementById("consultModePanel"),
+  consultBeanSelect: document.getElementById("consultBeanSelect"),
+  consultReferenceSelect: document.getElementById("consultReferenceSelect"),
+  consultReferenceDetail: document.getElementById("consultReferenceDetail"),
+  consultAfterList: document.getElementById("consultAfterList"),
+  consultTasteSummary: document.getElementById("consultTasteSummary"),
+  consultAsk: document.getElementById("consultAsk"),
+
   rorBeanSelect:
     document.getElementById(
       "rorBeanSelect"
@@ -3101,6 +3170,7 @@ function loadStoredNotes() {
         roastNotes:{},
         sharedNotes:{},
         beanOverrides:{},
+        consults:{},
       };
     }
 
@@ -3119,6 +3189,10 @@ function loadStoredNotes() {
       beanOverrides:
         parsed.beanOverrides ||
         {},
+
+      consults:
+        parsed.consults ||
+        {},
     };
 
   } catch(error) {
@@ -3131,6 +3205,7 @@ function loadStoredNotes() {
       roastNotes:{},
       sharedNotes:{},
       beanOverrides:{},
+      consults:{},
     };
   }
 }
@@ -5534,6 +5609,256 @@ function renderBeanHistory() {
 }
 
 
+function consultState(beanKey) {
+  if (!notes.consults || typeof notes.consults !== "object") notes.consults = {};
+  if (!notes.consults[beanKey]) {
+    notes.consults[beanKey] = {
+      referenceUid:"",
+      referenceNotes:{},
+      after:{},
+      ask:"",
+    };
+  }
+  const state = notes.consults[beanKey];
+  state.referenceNotes = state.referenceNotes || {};
+  state.after = state.after || {};
+  return state;
+}
+
+
+function consultRoasts(beanKey) {
+  return sortOldestFirst(
+    roasts.filter((roast) => inferBeanKey(roast) === beanKey)
+  );
+}
+
+
+function roastBatchSize(roast) {
+  for (const value of [roast?.weightGreen, roast?.greenWeight, roast?.chargeWeight, roast?.batchSize]) {
+    const number = finiteNumberOrNull(value);
+    if (number !== null) return number;
+  }
+  return null;
+}
+
+
+function detectedDifferences(reference, roast) {
+  const before = roastMetrics(reference);
+  const after = roastMetrics(roast);
+  const items = [];
+  const add = (label, oldValue, newValue, threshold, formatter, deltaFormatter) => {
+    if (!Number.isFinite(oldValue) || !Number.isFinite(newValue)) return;
+    const delta = newValue - oldValue;
+    if (Math.abs(delta) < threshold) return;
+    items.push(label + ": " + formatter(oldValue) + " → " + formatter(newValue) +
+      " (" + (delta > 0 ? "+" : "−") + deltaFormatter(Math.abs(delta)) + ")");
+  };
+  add("Preheat", before.preheatValue, after.preheatValue, 0.5,
+    (value) => round(value,1) + " ℃", (value) => round(value,1) + " ℃");
+  add("Total", before.totalSeconds, after.totalSeconds, 1, formatSeconds,
+    (value) => formatSeconds(Math.abs(value)));
+  add("First Crack", before.firstCrackSeconds, after.firstCrackSeconds, 1, formatSeconds,
+    (value) => formatSeconds(Math.abs(value)));
+  add("Development", before.developmentSeconds, after.developmentSeconds, 1, formatSeconds,
+    (value) => formatSeconds(Math.abs(value)));
+  add("DTR", before.dtrPercent, after.dtrPercent, 0.1,
+    (value) => round(value,1) + "%", (value) => round(value,1) + " pt");
+  add("FC temperature", before.fcTempValue, after.fcTempValue, 0.5,
+    (value) => round(value,1) + " ℃", (value) => round(value,1) + " ℃");
+  add("Batch size", roastBatchSize(reference), roastBatchSize(roast), 0.5,
+    (value) => round(value,1) + " g", (value) => round(value,1) + " g");
+  return items;
+}
+
+
+function firstDetailValue(source, names) {
+  for (const object of [source, source?.events, source?.summary, source?.data]) {
+    for (const name of names) {
+      const value = finiteNumberOrNull(object?.[name]);
+      if (value !== null) return value;
+    }
+  }
+  return null;
+}
+
+
+function normalizeConsultDetail(detail, roast) {
+  const source = detail?.data && !Array.isArray(detail.data) ? detail.data : detail;
+  const elapsed = firstSeries(source, ["elapsedSeconds"]);
+  const result = {
+    uid:getUid(roast),
+    ror:firstSeries(source, ["beanDerivative", "beanRoR", "rateOfRise", "ror"]),
+    bt:firstSeries(source, ["beanTemperature", "bean_temperature", "bt"]),
+    power:firstSeries(source, ["power", "powerSeries"]),
+    fan:firstSeries(source, ["fan", "fanSeries"]),
+    elapsed,
+    events:{
+      charge:firstDetailValue(source, ["chargeTime", "charge", "chargeSeconds"]),
+      yellow:firstDetailValue(source, ["yellowTime", "yellow", "yellowSeconds"]),
+      fc:firstDetailValue(source, ["firstCrackTime", "firstCrack", "fcTime"]),
+      drop:firstDetailValue(source, ["dropTime", "drop", "dropSeconds"]),
+    },
+  };
+  result.validTime = (series) => elapsed.length === series.length && elapsed.length > 0 &&
+    elapsed.every((value) => Number.isFinite(value) && value >= 0);
+  return result;
+}
+
+
+async function getConsultDetail(uid) {
+  if (roastDetailCache.has(uid)) return roastDetailCache.get(uid);
+  const response = await fetch("/api/roasts/" + encodeURIComponent(uid));
+  if (!response.ok) throw new Error("詳細データを取得できませんでした。");
+  const detail = await response.json();
+  roastDetailCache.set(uid, detail);
+  return detail;
+}
+
+
+function consultMetricsHTML(roast) {
+  const metrics = roastMetrics(roast);
+  const entries = [
+    ["Total", metrics.total], ["First Crack", metrics.fc],
+    ["Development", metrics.development], ["DTR", metrics.dtr],
+    ["FC temperature", historyDisplayValue(metrics.fcTemp, " ℃")],
+    ["Preheat", historyDisplayValue(metrics.preheat, " ℃")],
+    ["Batch size", historyDisplayValue(roastBatchSize(roast), " g")],
+  ];
+  return '<div class="consult-events">' + entries.map(([label,value]) =>
+    '<span class="pill"><strong>' + escapeHTML(label) + ':</strong> ' + escapeHTML(value) + '</span>'
+  ).join("") + '</div>';
+}
+
+
+function renderConsultSeries(title, values, elapsed) {
+  if (!values.some(Number.isFinite)) return '<div class="muted small">' + escapeHTML(title) + ': データなし</div>';
+  const hasTime = elapsed.length === values.length && elapsed.every((value) => Number.isFinite(value) && value >= 0);
+  return renderRorComparisonChart([{
+    label:title,
+    ror:values,
+    time:hasTime ? elapsed : null,
+  }], hasTime).replace("<h4>RoR曲線</h4>", "<h4>" + escapeHTML(title) + "</h4>");
+}
+
+
+function consultEventHTML(events) {
+  const labels = [["Charge",events.charge],["Yellow",events.yellow],["First Crack",events.fc],["Drop",events.drop]];
+  return '<div class="consult-events">' + labels.map(([label,value]) =>
+    '<span class="pill"><strong>' + escapeHTML(label) + ':</strong> ' +
+    escapeHTML(Number.isFinite(value) ? formatSeconds(value) : "—") + '</span>'
+  ).join("") + '</div>';
+}
+
+
+async function loadConsultDetailInto(uid, host, roast) {
+  host.innerHTML = '<div class="status loading">詳細データを取得中…</div>';
+  try {
+    const normalized = normalizeConsultDetail(await getConsultDetail(uid), roast);
+    if (host.dataset.uid !== uid) return;
+    host.innerHTML = consultEventHTML(normalized.events) +
+      renderConsultSeries("RoR", normalized.ror, normalized.elapsed) +
+      renderConsultSeries("BT", normalized.bt, normalized.elapsed) +
+      renderConsultSeries("Power", normalized.power, normalized.elapsed) +
+      renderConsultSeries("Fan", normalized.fan, normalized.elapsed);
+  } catch(error) {
+    if (host.dataset.uid === uid) host.innerHTML = '<div class="status warn">詳細データを取得できませんでした。既存の一覧データは保持されています。</div>';
+  }
+}
+
+
+function renderConsultReference(beanKey, reference) {
+  const state = consultState(beanKey);
+  const uid = getUid(reference);
+  const saved = state.referenceNotes[uid] || {good:"",issue:""};
+  state.referenceNotes[uid] = saved;
+  el.consultReferenceDetail.className = "";
+  el.consultReferenceDetail.innerHTML = '<h4>' + escapeHTML(fullDateTime(reference) + " / " + roastLabel(reference)) + '</h4>' +
+    consultMetricsHTML(reference) + '<div class="consult-fields"><div><label>GOOD</label><textarea data-consult-field="good" maxlength="800" placeholder="良かったところ">' +
+    escapeHTML(saved.good) + '</textarea></div><div><label>ISSUE</label><textarea data-consult-field="issue" maxlength="800" placeholder="改善したいところ">' +
+    escapeHTML(saved.issue) + '</textarea></div></div><p class="muted small"><strong>既存テイスティング:</strong> ' +
+    escapeHTML(getTasting(uid).trim() || "記録なし") + '</p><div id="consultReferenceCurves" data-uid="' + escapeHTML(uid) + '"></div>';
+  loadConsultDetailInto(uid, document.getElementById("consultReferenceCurves"), reference);
+}
+
+
+function renderConsultAfterCard(beanKey, reference, roast) {
+  const state = consultState(beanKey);
+  const uid = getUid(roast);
+  const saved = state.after[uid] || {mainChange:"",tasteChange:"",rating:"unrated"};
+  state.after[uid] = saved;
+  const differences = detectedDifferences(reference, roast);
+  const ratingOptions = [["unrated","未評価"],["improved","Improved"],["mixed","Mixed / Neutral"],["worse","Worse"]];
+  return '<article class="consult-after-card" data-after-uid="' + escapeHTML(uid) + '"><h4>' +
+    escapeHTML(fullDateTime(roast) + " / " + roastLabel(roast)) + '</h4>' + consultMetricsHTML(roast) +
+    '<label>MAIN CHANGE（ユーザーが確定する主な変更）</label><textarea data-after-field="mainChange" maxlength="800" placeholder="例：意図的に変更したのはPreheatだけ">' +
+    escapeHTML(saved.mainChange) + '</textarea><div class="consult-differences"><strong>Detected differences</strong><div class="muted small">記録値から検出した差です。意図的な変更とは限りません。</div>' +
+    (differences.length ? '<ul>' + differences.map((item) => '<li>' + escapeHTML(item) + '</li>').join("") + '</ul>' : '<div>表示対象となる差分はありません。</div>') + '</div>' +
+    '<label>TASTE / RESULT CHANGE</label><textarea data-after-field="tasteChange" maxlength="800" placeholder="Reference比で味がどう変化したか">' + escapeHTML(saved.tasteChange) + '</textarea>' +
+    '<div class="consult-rating">' + ratingOptions.map(([value,label]) => '<label><input type="radio" name="consult-rating-' + escapeHTML(uid) + '" data-after-field="rating" value="' + value + '"' + (saved.rating === value ? ' checked' : '') + '> ' + label + '</label>').join("") + '</div>' +
+    '<p class="muted small"><strong>既存テイスティング:</strong> ' + escapeHTML(getTasting(uid).trim() || "記録なし") + '</p>' +
+    '<details class="consult-detail" data-detail-uid="' + escapeHTML(uid) + '"><summary>詳細を見る</summary><div class="consult-detail-host" data-uid="' + escapeHTML(uid) + '"></div></details></article>';
+}
+
+
+function renderConsultTasteSummary(beanKey, afterRoasts) {
+  const state = consultState(beanKey);
+  const entered = afterRoasts.map((roast) => ({roast, saved:state.after[getUid(roast)]})).filter((item) => item.saved?.tasteChange || (item.saved?.rating && item.saved.rating !== "unrated"));
+  el.consultTasteSummary.className = entered.length ? "" : "consult-empty";
+  el.consultTasteSummary.innerHTML = entered.length ? '<ol>' + entered.map(({roast,saved}) =>
+    '<li><strong>' + escapeHTML(fullDateTime(roast)) + ' — ' + escapeHTML(saved.rating || "unrated") + '</strong><br>' + escapeHTML(saved.tasteChange || "変化の記録なし") + '</li>'
+  ).join("") + '</ol>' : 'Taste ratings not recorded';
+}
+
+
+function renderConsult() {
+  const beanKey = el.consultBeanSelect.value;
+  if (!beanKey) {
+    el.consultReferenceSelect.innerHTML = '<option value="">豆を選択してください</option>';
+    el.consultReferenceDetail.innerHTML = "Reference Roastを選択してください。";
+    el.consultAfterList.innerHTML = "Reference Roastを選択してください。";
+    el.consultTasteSummary.innerHTML = "Taste ratings not recorded";
+    el.consultAsk.value = "";
+    return;
+  }
+  const candidates = consultRoasts(beanKey);
+  const state = consultState(beanKey);
+  if (!candidates.some((roast) => getUid(roast) === state.referenceUid)) state.referenceUid = "";
+  el.consultReferenceSelect.innerHTML = '<option value="">Reference Roastを選択</option>' + candidates.map((roast) =>
+    '<option value="' + escapeHTML(getUid(roast)) + '"' + (getUid(roast) === state.referenceUid ? ' selected' : '') + '>' + escapeHTML(fullDateTime(roast) + " / " + roastLabel(roast)) + '</option>'
+  ).join("");
+  el.consultAsk.value = state.ask || "";
+  const reference = candidates.find((roast) => getUid(roast) === state.referenceUid);
+  if (!reference) {
+    el.consultReferenceDetail.className = "consult-empty";
+    el.consultReferenceDetail.innerHTML = "Reference Roastを選択してください。";
+    el.consultAfterList.innerHTML = "Reference Roastを選択してください。";
+    el.consultTasteSummary.innerHTML = "Taste ratings not recorded";
+    return;
+  }
+  renderConsultReference(beanKey, reference);
+  const referenceDate = getRoastDate(reference);
+  const afterRoasts = candidates.filter((roast) => {
+    const date = getRoastDate(roast);
+    return date && referenceDate && date.getTime() > referenceDate.getTime();
+  });
+  el.consultAfterList.className = afterRoasts.length ? "consult-after-list" : "consult-after-list consult-empty";
+  el.consultAfterList.innerHTML = afterRoasts.length ? afterRoasts.map((roast) => renderConsultAfterCard(beanKey, reference, roast)).join("") : "Reference以降の日付を持つ焙煎はありません。";
+  renderConsultTasteSummary(beanKey, afterRoasts);
+}
+
+
+function setSameBeanMode(mode) {
+  const consult = mode === "consult";
+  el.analysisModePanel.classList.toggle("hidden", consult);
+  el.consultModePanel.classList.toggle("hidden", !consult);
+  el.analysisModeButton.classList.toggle("active", !consult);
+  el.consultModeButton.classList.toggle("active", consult);
+  el.analysisModeButton.setAttribute("aria-selected", String(!consult));
+  el.consultModeButton.setAttribute("aria-selected", String(consult));
+  if (consult) renderConsult();
+}
+
+
 function numericSeries(value) {
   if (!Array.isArray(value)) return [];
   return value.map((item) => {
@@ -6137,6 +6462,9 @@ function populateBeanSelects() {
   const previousReport =
     Array.from(el.reportBeanSelect.selectedOptions).map((option) => option.value);
 
+  const previousConsult =
+    el.consultBeanSelect.value;
+
   const previousCross =
     Array.from(
       el.crossBeanSelect.selectedOptions
@@ -6161,6 +6489,10 @@ function populateBeanSelects() {
     '<option value="">豆情報なし</option>';
 
   el.reportBeanSelect.innerHTML =
+    optionHTML ||
+    '<option value="">豆情報なし</option>';
+
+  el.consultBeanSelect.innerHTML =
     optionHTML ||
     '<option value="">豆情報なし</option>';
 
@@ -6199,6 +6531,11 @@ function populateBeanSelects() {
       ? previousRor
       : (options[0]?.key || "");
 
+  el.consultBeanSelect.value =
+    options.some((x) => x.key === previousConsult)
+      ? previousConsult
+      : (options[0]?.key || "");
+
   renderRorRoastOptions();
 
   const reportSelection = previousReport.length
@@ -6225,6 +6562,8 @@ function populateBeanSelects() {
         );
     }
   );
+
+  renderConsult();
 }
 
 
@@ -7527,6 +7866,60 @@ el.beanAnalyzeButton.addEventListener(
   "click",
   analyzeSelectedBean
 );
+
+el.analysisModeButton.addEventListener("click", () => setSameBeanMode("analysis"));
+el.consultModeButton.addEventListener("click", () => setSameBeanMode("consult"));
+el.consultBeanSelect.addEventListener("change", renderConsult);
+el.consultReferenceSelect.addEventListener("change", () => {
+  const beanKey = el.consultBeanSelect.value;
+  if (!beanKey) return;
+  consultState(beanKey).referenceUid = el.consultReferenceSelect.value;
+  saveStoredNotes();
+  renderConsult();
+});
+el.consultAsk.addEventListener("input", () => {
+  const beanKey = el.consultBeanSelect.value;
+  if (!beanKey) return;
+  consultState(beanKey).ask = el.consultAsk.value;
+  saveStoredNotes();
+});
+el.consultReferenceDetail.addEventListener("input", (event) => {
+  const field = event.target.dataset.consultField;
+  const beanKey = el.consultBeanSelect.value;
+  const uid = el.consultReferenceSelect.value;
+  if (!field || !beanKey || !uid) return;
+  const state = consultState(beanKey);
+  state.referenceNotes[uid] = state.referenceNotes[uid] || {good:"",issue:""};
+  state.referenceNotes[uid][field] = event.target.value;
+  saveStoredNotes();
+});
+el.consultAfterList.addEventListener("input", (event) => {
+  const field = event.target.dataset.afterField;
+  const card = event.target.closest("[data-after-uid]");
+  const beanKey = el.consultBeanSelect.value;
+  if (!field || !card || !beanKey) return;
+  const state = consultState(beanKey);
+  const uid = card.dataset.afterUid;
+  state.after[uid] = state.after[uid] || {mainChange:"",tasteChange:"",rating:"unrated"};
+  state.after[uid][field] = event.target.value;
+  saveStoredNotes();
+  if (field === "tasteChange" || field === "rating") {
+    const reference = consultRoasts(beanKey).find((roast) => getUid(roast) === state.referenceUid);
+    const referenceDate = getRoastDate(reference);
+    const after = referenceDate ? consultRoasts(beanKey).filter((roast) => getRoastDate(roast)?.getTime() > referenceDate.getTime()) : [];
+    renderConsultTasteSummary(beanKey, after);
+  }
+});
+el.consultAfterList.addEventListener("toggle", (event) => {
+  const details = event.target;
+  if (!(details instanceof HTMLDetailsElement) || !details.open || details.dataset.loaded) return;
+  const uid = details.dataset.detailUid;
+  const roast = roasts.find((item) => getUid(item) === uid);
+  const host = details.querySelector(".consult-detail-host");
+  if (!roast || !host) return;
+  details.dataset.loaded = "true";
+  loadConsultDetailInto(uid, host, roast);
+}, true);
 
 el.rorBeanSelect.addEventListener(
   "change",
