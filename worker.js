@@ -19,10 +19,7 @@ export default {
     }
 
     if (url.pathname === "/api/roasts") {
-      return proxyRoastWorld(
-        "https://api.roast.world/api/v3/public/roasts?page=1&size=100",
-        env
-      );
+      return fetchAllRoastPages(env);
     }
 
     if (url.pathname === "/api/beans") {
@@ -947,6 +944,53 @@ async function proxyRoastWorld(
   }
 
   return json(result.data);
+}
+
+
+function extractRoastList(data) {
+  if (Array.isArray(data)) return data;
+  for (const source of [data, data?.data]) {
+    for (const key of ["data", "items", "content", "results", "roasts"]) {
+      if (Array.isArray(source?.[key])) return source[key];
+    }
+  }
+  return null;
+}
+
+
+async function fetchAllRoastPages(env) {
+  const pageSize = 100;
+  const maxPages = 20;
+  const combined = [];
+  const seen = new Set();
+
+  for (let page = 1; page <= maxPages; page++) {
+    const result = await roastWorldGet(
+      "https://api.roast.world/api/v3/public/roasts?page=" + page + "&size=" + pageSize,
+      env
+    );
+    if (!result.ok) {
+      return json({ error: "Roast.World API エラー", details: result.text }, 502);
+    }
+    const list = extractRoastList(result.data);
+    if (list === null) {
+      return json({ error: "Roast.World APIの焙煎一覧形式を認識できません。" }, 502);
+    }
+    for (const roast of list) {
+      const uid = String(roast?.uid || roast?.id || "").trim();
+      if (uid && seen.has(uid)) continue;
+      if (uid) seen.add(uid);
+      combined.push(roast);
+    }
+    const totalPages = Number(result.data?.totalPages ?? result.data?.page?.totalPages);
+    const hasNext = result.data?.hasNext ?? result.data?.page?.hasNext;
+    if (!list.length || list.length < pageSize ||
+        (Number.isFinite(totalPages) && page >= totalPages) || hasNext === false) {
+      return json(combined);
+    }
+  }
+
+  return json({ error: "焙煎一覧が安全取得上限を超えました。" }, 502);
 }
 
 
@@ -2158,6 +2202,7 @@ label {
   margin-bottom:14px;
 }
 
+
 .bean-history {
   margin-top:18px;
   border-top:1px solid var(--border);
@@ -2179,6 +2224,23 @@ label {
 
 .bean-history-panel-header h3 {
   margin:0;
+}
+
+.ror-roast-options {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+  max-height:320px;
+  overflow:auto;
+  padding:10px;
+  border:1px solid var(--border);
+  border-radius:12px;
+}
+
+.ror-roast-options label {
+  display:flex;
+  gap:8px;
+  align-items:flex-start;
 }
 
 .bean-history-charts {
@@ -2251,6 +2313,10 @@ label {
   }
 
   .bean-history-charts {
+    grid-template-columns:1fr;
+  }
+
+  .ror-roast-options {
     grid-template-columns:1fr;
   }
 
@@ -2337,6 +2403,32 @@ padding:12px;
 border-radius:10px;
 "
 ></pre>
+
+</section>
+
+
+<section class="card">
+
+<h2>📈 RoR曲線比較</h2>
+
+<p class="section-note muted">
+豆を1種類選び、その豆の焙煎を最大6件まで重ねて比較します。欠損値は推測しません。
+</p>
+
+<label for="rorBeanSelect">比較する豆</label>
+<select id="rorBeanSelect" style="width:100%; margin-bottom:12px">
+<option value="">豆データを読み込み中…</option>
+</select>
+
+<label>比較する焙煎</label>
+<div id="rorRoastOptions" class="ror-roast-options muted">豆を選択してください。</div>
+
+<button id="rorCompareButton" class="btn blue" type="button" style="margin-top:12px">
+RoRを比較
+</button>
+
+<div id="rorCompareStatus" class="status hidden" style="margin-top:12px"></div>
+<div id="rorCompareChart" style="margin-top:12px"></div>
 
 </section>
 
@@ -2696,6 +2788,9 @@ let currentPage =
 let parsedBulk =
   null;
 
+const roastDetailCache =
+  new Map();
+
 
 const el = {
   connectionStatus:
@@ -2766,6 +2861,31 @@ const el = {
   beanAnalysis:
     document.getElementById(
       "beanAnalysis"
+    ),
+
+  rorBeanSelect:
+    document.getElementById(
+      "rorBeanSelect"
+    ),
+
+  rorRoastOptions:
+    document.getElementById(
+      "rorRoastOptions"
+    ),
+
+  rorCompareButton:
+    document.getElementById(
+      "rorCompareButton"
+    ),
+
+  rorCompareStatus:
+    document.getElementById(
+      "rorCompareStatus"
+    ),
+
+  rorCompareChart:
+    document.getElementById(
+      "rorCompareChart"
     ),
 
   crossBeanSelect:
@@ -5260,6 +5380,146 @@ function renderBeanHistory() {
 }
 
 
+function numericSeries(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => {
+    const raw = item && typeof item === "object"
+      ? (item.value ?? item.y ?? item.temperature)
+      : item;
+    if (raw === null || raw === undefined || raw === "") return null;
+    const number = Number(raw);
+    return Number.isFinite(number) ? number : null;
+  });
+}
+
+
+function firstSeries(object, names) {
+  for (const source of [object, object?.series, object?.data]) {
+    for (const name of names) {
+      if (Array.isArray(source?.[name])) return numericSeries(source[name]);
+    }
+  }
+  return [];
+}
+
+
+function normalizeRorDetail(detail, roast) {
+  const source = detail?.data && !Array.isArray(detail.data)
+    ? detail.data
+    : detail;
+  const ror = firstSeries(source, ["beanDerivative", "beanRoR", "rateOfRise", "ror"]);
+  const time = firstSeries(source, ["elapsedSeconds"]);
+  const validTime = time.length === ror.length && time.length > 0 &&
+    time.every((value) => Number.isFinite(value) && value >= 0);
+  return {
+    uid: getUid(roast),
+    label: fullDateTime(roast) + " / " + roastLabel(roast),
+    ror,
+    time: validTime ? time : null,
+  };
+}
+
+
+function renderRorRoastOptions() {
+  const beanKey = el.rorBeanSelect.value;
+  const candidates = sortNewestFirst(
+    roasts.filter((roast) => inferBeanKey(roast) === beanKey)
+  );
+  el.rorCompareChart.innerHTML = "";
+  el.rorCompareStatus.className = "status hidden";
+  el.rorRoastOptions.innerHTML = candidates.length
+    ? candidates.map((roast) => {
+        const uid = getUid(roast);
+        return '<label><input type="checkbox" name="rorRoast" value="' +
+          escapeHTML(uid) + '"><span>' + escapeHTML(fullDateTime(roast) + " / " + roastLabel(roast)) +
+          "</span></label>";
+      }).join("")
+    : '<span class="muted">この豆の焙煎データはありません。</span>';
+}
+
+
+function renderRorComparisonChart(seriesList, useTime) {
+  const colors = ["#126b3a", "#145a8d", "#a35f00", "#7b3fa1", "#b52626", "#007f80"];
+  const width = 900, height = 380, left = 58, right = 20, top = 28, bottom = 55;
+  const points = seriesList.flatMap((series) => series.ror.map((y, index) => ({
+    x: useTime ? series.time[index] : index,
+    y,
+  })).filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y)));
+  if (!points.length) return '<div class="status warn">比較できるRoR時系列データがありません。</div>';
+  const maxX = Math.max(...points.map((point) => point.x), 1);
+  let minY = Math.min(...points.map((point) => point.y));
+  let maxY = Math.max(...points.map((point) => point.y));
+  if (minY === maxY) { minY -= 1; maxY += 1; }
+  const xAt = (x) => left + (width - left - right) * x / maxX;
+  const yAt = (y) => top + (height - top - bottom) * (maxY - y) / (maxY - minY);
+  let svg = '<svg viewBox="0 0 ' + width + " " + height + '" role="img" aria-label="RoR曲線比較">';
+  for (let tick = 0; tick <= 4; tick++) {
+    const yValue = minY + (maxY - minY) * tick / 4;
+    const y = yAt(yValue);
+    svg += '<line x1="' + left + '" y1="' + y + '" x2="' + (width-right) + '" y2="' + y + '" stroke="#ddddda" />' +
+      '<text x="' + (left-7) + '" y="' + (y+4) + '" text-anchor="end" font-size="11">' + escapeHTML(round(yValue,1)) + "</text>";
+  }
+  seriesList.forEach((series, seriesIndex) => {
+    let segment = [];
+    const flush = () => {
+      if (segment.length) svg += '<polyline points="' + segment.join(" ") + '" fill="none" stroke="' + colors[seriesIndex] + '" stroke-width="2" />';
+      segment = [];
+    };
+    series.ror.forEach((value, index) => {
+      const x = useTime ? series.time[index] : index;
+      if (!Number.isFinite(value) || !Number.isFinite(x)) { flush(); return; }
+      segment.push(xAt(x) + "," + yAt(value));
+    });
+    flush();
+  });
+  svg += '<text x="' + ((left + width-right)/2) + '" y="' + (height-12) + '" text-anchor="middle" font-size="12">' +
+    (useTime ? "経過秒" : "サンプル番号") + "</text></svg>";
+  const legend = seriesList.map((series, index) => '<span class="pill"><span style="color:' + colors[index] + '">●</span> ' + escapeHTML(series.label) + "</span>").join("");
+  return '<div class="bean-history-chart"><h4>RoR曲線</h4>' + legend +
+    '<p class="muted small">' + (useTime ? "X軸は詳細データの経過秒です。" : "時刻データがないため、X軸はサンプル番号です。") +
+    '</p><div class="bean-history-chart-scroll">' + svg + "</div></div>";
+}
+
+
+async function compareSelectedRor() {
+  const selected = Array.from(document.querySelectorAll('input[name="rorRoast"]:checked'));
+  if (!selected.length) {
+    setStatus(el.rorCompareStatus, "比較する焙煎を選択してください。", "warn");
+    return;
+  }
+  if (selected.length > 6) {
+    setStatus(el.rorCompareStatus, "一度に比較できる焙煎は6件までです。", "warn");
+    return;
+  }
+  setStatus(el.rorCompareStatus, "RoR詳細データを取得中…", "loading");
+  el.rorCompareChart.innerHTML = "";
+  const roastLookup = new Map(roasts.map((roast) => [getUid(roast), roast]));
+  const results = await Promise.allSettled(selected.map(async (input) => {
+    const uid = input.value;
+    if (!roastDetailCache.has(uid)) {
+      const response = await fetch("/api/roasts/" + encodeURIComponent(uid));
+      if (!response.ok) throw new Error(uid);
+      roastDetailCache.set(uid, await response.json());
+    }
+    return normalizeRorDetail(roastDetailCache.get(uid), roastLookup.get(uid));
+  }));
+  const series = results.filter((result) => result.status === "fulfilled")
+    .map((result) => result.value).filter((item) => item.ror.some(Number.isFinite));
+  const failures = results.length - series.length;
+  const withTime = series.filter((item) => item.time);
+  const usable = withTime.length && withTime.length !== series.length ? withTime : series;
+  const useTime = usable.length > 0 && usable.every((item) => item.time);
+  el.rorCompareChart.innerHTML = renderRorComparisonChart(usable, useTime);
+  if (!series.length) {
+    setStatus(el.rorCompareStatus, "比較できるRoRデータを取得できませんでした。", "warn");
+  } else if (failures || usable.length !== series.length) {
+    setStatus(el.rorCompareStatus, "一部の焙煎は詳細取得・RoR・時刻データ不足のため除外しました。", "warn");
+  } else {
+    setStatus(el.rorCompareStatus, series.length + "件のRoR曲線を表示しました。", "ok");
+  }
+}
+
+
 function renderRoastList() {
   const lookup =
     buildBeanLookup();
@@ -5594,6 +5854,9 @@ function populateBeanSelects() {
   const previousFilter =
     el.filterBean.value;
 
+  const previousRor =
+    el.rorBeanSelect.value;
+
   const previousCross =
     Array.from(
       el.crossBeanSelect.selectedOptions
@@ -5612,6 +5875,10 @@ function populateBeanSelects() {
   el.filterBean.innerHTML =
     '<option value="">すべて</option>' +
     optionHTML;
+
+  el.rorBeanSelect.innerHTML =
+    optionHTML ||
+    '<option value="">豆情報なし</option>';
 
   const analyzeSelection =
     previousAnalyze.length
@@ -5642,6 +5909,13 @@ function populateBeanSelects() {
     el.filterBean.value =
       previousFilter;
   }
+
+  el.rorBeanSelect.value =
+    options.some((x) => x.key === previousRor)
+      ? previousRor
+      : (options[0]?.key || "");
+
+  renderRorRoastOptions();
 
   const crossSelection =
     previousCross.length
@@ -6961,6 +7235,16 @@ el.beanSelect.addEventListener(
 el.beanAnalyzeButton.addEventListener(
   "click",
   analyzeSelectedBean
+);
+
+el.rorBeanSelect.addEventListener(
+  "change",
+  renderRorRoastOptions
+);
+
+el.rorCompareButton.addEventListener(
+  "click",
+  compareSelectedRor
 );
 
 el.crossAnalyzeButton.addEventListener(
