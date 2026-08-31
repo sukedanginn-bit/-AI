@@ -2243,6 +2243,100 @@ label {
   align-items:flex-start;
 }
 
+.report-preview {
+  margin-top:16px;
+  padding:16px;
+  background:#ececea;
+  border-radius:12px;
+}
+
+.report-page {
+  width:210mm;
+  max-width:100%;
+  min-height:273mm;
+  margin:0 auto 16px;
+  padding:12mm;
+  background:white;
+  box-sizing:border-box;
+  color:#111;
+}
+
+.report-page h1,
+.report-page h2,
+.report-page h3 {
+  color:#111;
+}
+
+.report-summary-grid {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px;
+}
+
+.report-bean-block {
+  break-inside:avoid;
+  margin-bottom:16px;
+}
+
+.report-table {
+  width:100%;
+  border-collapse:collapse;
+  font-size:10px;
+}
+
+.report-table th,
+.report-table td {
+  border:1px solid #bbb;
+  padding:4px;
+  vertical-align:top;
+}
+
+.report-question {
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+}
+
+@page {
+  size:A4;
+  margin:0;
+}
+
+@media print {
+  body.print-report .container > * {
+    display:none !important;
+  }
+
+  body.print-report .container > #reportHostCard {
+    display:block !important;
+    margin:0;
+    padding:0;
+    border:0;
+    box-shadow:none;
+  }
+
+  body.print-report #reportControls {
+    display:none !important;
+  }
+
+  body.print-report .report-preview {
+    margin:0;
+    padding:0;
+    background:white;
+  }
+
+  body.print-report .report-page {
+    max-width:none;
+    margin:0;
+    break-after:page;
+    page-break-after:always;
+  }
+
+  body.print-report .report-page:last-child {
+    break-after:auto;
+    page-break-after:auto;
+  }
+}
+
 .bean-history-charts {
   display:grid;
   grid-template-columns:repeat(2,minmax(0,1fr));
@@ -2429,6 +2523,36 @@ RoRを比較
 
 <div id="rorCompareStatus" class="status hidden" style="margin-top:12px"></div>
 <div id="rorCompareChart" style="margin-top:12px"></div>
+
+</section>
+
+
+<section id="reportHostCard" class="card">
+
+<h2>📄 専門家共有レポート</h2>
+
+<div id="reportControls">
+<p class="section-note muted">
+大会実績のあるロースターへ共有するため、最大3種類の豆・各豆の最近5焙煎を2〜3ページにまとめます。
+</p>
+
+<label for="reportBeanSelect">レポートに載せる豆（最大3種類）</label>
+<select id="reportBeanSelect" multiple size="6" style="width:100%; margin-bottom:12px">
+<option value="">豆データを読み込み中…</option>
+</select>
+
+<label for="roastReportQuestions">専門家へ相談したい質問</label>
+<textarea id="roastReportQuestions" maxlength="800" placeholder="例：FC前後の熱量の使い方、舌の乾きが残る原因、再現性について確認したい点"></textarea>
+
+<div class="toolbar" style="margin-top:12px">
+<button id="generateReportButton" class="btn green" type="button">レポートを生成</button>
+<button id="printReportButton" class="btn blue hidden" type="button">印刷 / PDF保存</button>
+</div>
+
+<div id="reportStatus" class="status hidden" style="margin-top:12px"></div>
+</div>
+
+<div id="roastReportPreview" class="report-preview hidden"></div>
 
 </section>
 
@@ -2886,6 +3010,36 @@ const el = {
   rorCompareChart:
     document.getElementById(
       "rorCompareChart"
+    ),
+
+  reportBeanSelect:
+    document.getElementById(
+      "reportBeanSelect"
+    ),
+
+  roastReportQuestions:
+    document.getElementById(
+      "roastReportQuestions"
+    ),
+
+  generateReportButton:
+    document.getElementById(
+      "generateReportButton"
+    ),
+
+  printReportButton:
+    document.getElementById(
+      "printReportButton"
+    ),
+
+  reportStatus:
+    document.getElementById(
+      "reportStatus"
+    ),
+
+  roastReportPreview:
+    document.getElementById(
+      "roastReportPreview"
     ),
 
   crossBeanSelect:
@@ -5520,6 +5674,129 @@ async function compareSelectedRor() {
 }
 
 
+function selectRecentRoastsForReport(list, limit = 5) {
+  return sortOldestFirst(sortNewestFirst(list).slice(0, limit));
+}
+
+
+function reportRange(rows, key, formatter = (value) => String(value)) {
+  const values = rows.map((row) => row.metrics[key]).filter(Number.isFinite);
+  if (!values.length) return "—";
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  return formatter(min) + (min === max ? "" : "–" + formatter(max));
+}
+
+
+function reportExcerpt(value, limit) {
+  const text = String(value ?? "").trim();
+  if (!text) return "—";
+  return text.length <= limit ? text : text.slice(0, limit) + "…";
+}
+
+
+function buildReportBeanData(bean) {
+  const selected = selectRecentRoastsForReport(
+    roasts.filter((roast) => inferBeanKey(roast) === bean.key)
+  );
+  return {
+    ...bean,
+    rows: buildBeanHistoryRows(selected),
+    allCount: roasts.filter((roast) => inferBeanKey(roast) === bean.key).length,
+  };
+}
+
+
+function renderReportBeanBlock(bean) {
+  const rows = bean.rows;
+  const chart = rows.length > 1
+    ? renderMetricChart("Total / First Crack", rows, [
+        { key:"totalSeconds", label:"Total", color:"#126b3a" },
+        { key:"firstCrackSeconds", label:"First Crack", color:"#145a8d" },
+      ], formatSeconds)
+    : '<p class="muted small">グラフには2件以上の焙煎が必要です。</p>';
+  const table = rows.map((row) => {
+    const m = row.metrics;
+    return "<tr><td>" + escapeHTML(row.dateLabel) + "</td><td>" +
+      escapeHTML(historyDisplayValue(m.total)) + "</td><td>" +
+      escapeHTML(historyDisplayValue(m.fc)) + "</td><td>" +
+      escapeHTML(historyDisplayValue(m.development)) + "</td><td>" +
+      escapeHTML(historyDisplayValue(m.dtr)) + "</td><td>" +
+      escapeHTML(historyDisplayValue(m.preheat, " ℃")) + "</td><td>" +
+      escapeHTML(historyDisplayValue(m.fcTemp, " ℃")) + "</td><td>" +
+      escapeHTML(reportExcerpt(row.tasting, 120)) + "</td></tr>";
+  }).join("");
+  return '<section class="report-bean-block"><h2>' + escapeHTML(bean.label) +
+    '</h2><p class="muted small">全' + bean.allCount + "焙煎から最近" + rows.length +
+    "焙煎を掲載（掲載内は古い順）。</p>" + chart +
+    '<table class="report-table"><thead><tr><th>日時</th><th>Total</th><th>FC</th><th>Dev</th><th>DTR</th><th>Preheat</th><th>FC温度</th><th>本人メモ</th></tr></thead><tbody>' +
+    table + "</tbody></table></section>";
+}
+
+
+function renderRoastReport() {
+  const selectedBeans = Array.from(el.reportBeanSelect.selectedOptions)
+    .map((option) => ({
+      key: option.value,
+      label: option.textContent.replace(/\s*—\s*\d+焙煎\s*$/, "").trim(),
+    })).filter((bean) => bean.key);
+  el.roastReportPreview.classList.add("hidden");
+  el.printReportButton.classList.add("hidden");
+  if (!selectedBeans.length) {
+    setStatus(el.reportStatus, "レポートに載せる豆を選択してください。", "warn");
+    return;
+  }
+  if (selectedBeans.length > 3) {
+    setStatus(el.reportStatus, "レポートには一度に3種類まで選択できます。", "warn");
+    return;
+  }
+  const beans = selectedBeans.map(buildReportBeanData).filter((bean) => bean.rows.length);
+  if (!beans.length) {
+    setStatus(el.reportStatus, "選択した豆の焙煎データがありません。", "warn");
+    return;
+  }
+  const questions = el.roastReportQuestions.value.trim();
+  const created = new Intl.DateTimeFormat("ja-JP", {
+    timeZone:"Asia/Tokyo", year:"numeric", month:"2-digit", day:"2-digit",
+    hour:"2-digit", minute:"2-digit", hour12:false,
+  }).format(new Date());
+  const summary = beans.map((bean) => {
+    const rows = bean.rows;
+    const tasting = [...rows].reverse().find((row) => String(row.tasting ?? "").trim());
+    return '<div class="bean-history-chart"><h3>' + escapeHTML(bean.label) + "</h3>" +
+      '<p>最近' + rows.length + "焙煎 / 全" + bean.allCount + "焙煎</p>" +
+      '<p>Total: ' + escapeHTML(reportRange(rows, "totalSeconds", formatSeconds)) + "<br>" +
+      'FC: ' + escapeHTML(reportRange(rows, "firstCrackSeconds", formatSeconds)) + "<br>" +
+      'Dev: ' + escapeHTML(reportRange(rows, "developmentSeconds", formatSeconds)) + "<br>" +
+      'DTR: ' + escapeHTML(reportRange(rows, "dtrPercent", (value) => round(value,1) + "%")) + "</p>" +
+      '<p class="small"><strong>直近の本人メモ:</strong> ' +
+      escapeHTML(tasting ? reportExcerpt(tasting.tasting, 300) : "—") + "</p></div>";
+  }).join("");
+  const questionHtml = questions
+    ? '<h2>専門家へ相談したい質問</h2><div class="report-question">' + escapeHTML(questions) + "</div>"
+    : "";
+  const firstPage = '<article class="report-page"><h1>Roast.World Analyzer 焙煎現状レポート</h1>' +
+    '<p>作成日時: ' + escapeHTML(created) + "</p>" +
+    '<p class="section-note">欠損値は推測・補完していません。各豆の条件は豆ごとに独立して表示し、異なる豆へ直接一般化していません。AIによる評価・仮説は含みません。</p>' +
+    '<div class="report-summary-grid">' + summary + "</div>" + questionHtml + "</article>";
+  const detailPages = [];
+  for (let index = 0; index < beans.length; index += 2) {
+    detailPages.push('<article class="report-page"><h1>豆別・最近の焙煎</h1>' +
+      beans.slice(index, index + 2).map(renderReportBeanBlock).join("") + "</article>");
+  }
+  el.roastReportPreview.innerHTML = firstPage + detailPages.join("");
+  el.roastReportPreview.classList.remove("hidden");
+  el.printReportButton.classList.remove("hidden");
+  setStatus(el.reportStatus, beans.length + "種類の豆を" + (1 + detailPages.length) + "ページにまとめました。", "ok");
+}
+
+
+function printRoastReport() {
+  document.body.classList.add("print-report");
+  window.print();
+}
+
+
 function renderRoastList() {
   const lookup =
     buildBeanLookup();
@@ -5857,6 +6134,9 @@ function populateBeanSelects() {
   const previousRor =
     el.rorBeanSelect.value;
 
+  const previousReport =
+    Array.from(el.reportBeanSelect.selectedOptions).map((option) => option.value);
+
   const previousCross =
     Array.from(
       el.crossBeanSelect.selectedOptions
@@ -5877,6 +6157,10 @@ function populateBeanSelects() {
     optionHTML;
 
   el.rorBeanSelect.innerHTML =
+    optionHTML ||
+    '<option value="">豆情報なし</option>';
+
+  el.reportBeanSelect.innerHTML =
     optionHTML ||
     '<option value="">豆情報なし</option>';
 
@@ -5916,6 +6200,13 @@ function populateBeanSelects() {
       : (options[0]?.key || "");
 
   renderRorRoastOptions();
+
+  const reportSelection = previousReport.length
+    ? previousReport
+    : options.slice(0, Math.min(2, options.length)).map((item) => item.key);
+  Array.from(el.reportBeanSelect.options).forEach((option) => {
+    option.selected = reportSelection.includes(option.value);
+  });
 
   const crossSelection =
     previousCross.length
@@ -7245,6 +7536,21 @@ el.rorBeanSelect.addEventListener(
 el.rorCompareButton.addEventListener(
   "click",
   compareSelectedRor
+);
+
+el.generateReportButton.addEventListener(
+  "click",
+  renderRoastReport
+);
+
+el.printReportButton.addEventListener(
+  "click",
+  printRoastReport
+);
+
+window.addEventListener(
+  "afterprint",
+  () => document.body.classList.remove("print-report")
 );
 
 el.crossAnalyzeButton.addEventListener(
